@@ -59,51 +59,42 @@ Function MakeObjectContourWaves()
 	// Scale the coordinates to real values
 	ScaleCoords(matA)
 	Variable nObjects = V_max + 1
-	Variable nRows = dimsize(MatA,0)
-	Variable nContours, rowStart, rowEnd
+	Variable nContours, contourVar
 	String wName
 	
 	Variable i,j
 	
 	for (i = 0; i < nObjects; i += 1)
 		MatrixOP/O filtObj = col(matA,0)
-		filtObj = (filtObj == i) ? matA[p][1] : NaN
-		nContours = wavemax(filtObj) + 1
+		filtObj[] = (filtObj[p] == i) ? matA[p][1] : NaN
+		WaveTransform zapnans filtObj
+		FindDuplicates/RN=uniqueContours filtObj
+		nContours = Numpnts(uniqueContours)
 		// zero-indexed list of contours in this object
 		for (j = 0; j < nContours; j += 1)
+			contourVar = uniqueContours[j]
 			// find the rows that correspond to each contour
-			FindValue/V=(j)/Z filtObj
-			// we could have be missing j although it continues with j +1
-			if(V_Value == -1)
-				continue
-			endif
-			rowStart = V_Value
-			// now we find the end of this contour series
-			FindValue/V=(j+1)/Z filtObj
-			if(V_Value == -1)
-				FindValue/FNAN filtObj
-				if(V_Value < rowStart)
-					rowEnd = nRows - 1
-				else
-					rowEnd = V_Value - 1
-				endif
-			else
-				rowEnd = V_Value - 1
-			endif
+			Duplicate/O/FREE matA,matB
+			matB[][] = (matB[p][0] == i && matB[p][1] == contourVar) ? matB[p][q] : NaN
+			MatrixOp/O/FREE xW = col(matB,2)
+			MatrixOp/O/FREE yW = col(matB,3)
+			// no need to take the z column here
+			WaveTransform zapnans xW
+			WaveTransform zapnans yW
 			// Now make ObjectContour waves
 			// Object 0 is Mitochondria, Object 1 is vesicles
 			if (i == 0)
-				wName = "Mt"
+				wName = "Mt" // Mitochondria
+			elseif (i == 1)
+				wName = "Vs" // Vesicle
 			else
-				wName = "Vs"
+				wName = "Uk" // unknown
 			endif
-			wName += "_" + num2str(j)
-			Make/O/N=((rowEnd-rowStart)+1,3) $wName
-			Wave w0 = $wName
-			w0[][] = matA[p+rowStart][q+2]
+			wName += "_" + num2str(contourVar)
+			Concatenate/O/NP=1 {xW,yW}, $wName
 		endfor
 	endfor
-	KillWaves matA,filtObj
+	KillWaves/Z matA,filtObj,UniqueContours
 End
 
 ///	@param	matA	wave reference to matrix
