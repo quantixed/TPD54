@@ -3,16 +3,17 @@
 
 // Menu item for easy execution
 Menu "Macros"
-	"FerriTag Analysis...",  IMODModelAnalysis()
+	"IMOD Models...",  IMODModelAnalysis()
 End
 
 Function IMODModelAnalysis()
 	LoadIMODModels()
+	SetUpWindows()
 	ProcessAllModels()
-	CollectAllMeasurements()
-	MakeSummaryLayout()
-	RotatePits()
-	OverlayAllPits()
+//	CollectAllMeasurements()
+//	MakeSummaryLayout()
+//	RotatePits()
+//	OverlayAllPits()
 End
 
 Function LoadIMODModels()
@@ -68,9 +69,16 @@ Function MakeObjectContourWaves()
 		MatrixOP/O filtObj = col(matA,0)
 		filtObj = (filtObj == i) ? matA[p][1] : NaN
 		nContours = wavemax(filtObj) + 1
+		// zero-indexed list of contours in this object
 		for (j = 0; j < nContours; j += 1)
+			// find the rows that correspond to each contour
 			FindValue/V=(j)/Z filtObj
+			// we could have be missing j although it continues with j +1
+			if(V_Value == -1)
+				continue
+			endif
 			rowStart = V_Value
+			// now we find the end of this contour series
 			FindValue/V=(j+1)/Z filtObj
 			if(V_Value == -1)
 				FindValue/FNAN filtObj
@@ -83,12 +91,11 @@ Function MakeObjectContourWaves()
 				rowEnd = V_Value - 1
 			endif
 			// Now make ObjectContour waves
-			// Can edit this to generalise
-			// Object 0 is FT, Object 1 is PM, can be 2
+			// Object 0 is Mitochondria, Object 1 is vesicles
 			if (i == 0)
-				wName = "FT"
+				wName = "Mt"
 			else
-				wName = "PM"
+				wName = "Vs"
 			endif
 			wName += "_" + num2str(j)
 			Make/O/N=((rowEnd-rowStart)+1,3) $wName
@@ -97,29 +104,13 @@ Function MakeObjectContourWaves()
 		endfor
 	endfor
 	KillWaves matA,filtObj
-	
-	String wList = WaveList("FT_*",";","")
-	Variable nWaves = ItemsInList(wList)
-	Variable nCol = 3 // x y and z
-	Make/O/N=(nWaves,nCol) FTWave
-	
-	for (i = 0; i < nWaves; i += 1)
-		wName = StringFromList(i, wList)
-		Wave w0 = $wName
-		nCol = dimsize(w0,1)
-		for (j = 0; j < nCol; j += 1)
-			WaveStats/Q/RMD=[][j] w0
-			FTWave[i][j] = V_avg
-		endfor
-		KillWaves w0
-	endfor
 End
 
 ///	@param	matA	wave reference to matrix
 Function ScaleCoords(matA)
 	Wave matA
 	
-	String txtName = ReplAceString("'",GetDataFolder(0),"")
+	String txtName = ReplaceString("'",GetDataFolder(0),"")
 	Wave/T/Z FileName = root:FileName
 	Wave/Z PixelSize = root:PixelSize
 	Wave/Z matA
@@ -139,6 +130,11 @@ Function ScaleCoords(matA)
 	// Print txtName, pxSize
 End
 
+Function SetUpWindows()
+	KillWindow/Z allVsPlot
+	Display/N=allVsPLot
+End
+
 Function ProcessAllModels()
 	SetDataFolder root:data:	// relies on earlier load
 	DFREF dfr = GetDataFolderDFR()
@@ -150,72 +146,53 @@ Function ProcessAllModels()
 	for(i = 0; i < numDataFolders; i += 1)
 		folderName = GetIndexedObjNameDFR(dfr, 4, i)
 		SetDataFolder ":'" + folderName + "':"
-		Distance2PM()
-		MarkOutPit()
-		ContourCalcs()
+		// run functions from here for everything we want to do
+		FindVesicleCentresAndPlotOut()
+//		Distance2PM()
 		SetDataFolder root:data:
 	endfor
 	SetDataFolder root:
 End
 
-
-Function MarkOutPit()
+Function FindVesicleCentresAndPlotOut()
+	// finding the centre of each vesicle and placing coords into a wave called VsWave
+	String wList = WaveList("Vs_*",";","")
+	Variable nWaves = ItemsInList(wList)
+	Variable nCol = 3 // x y and z
+	Make/O/N=(nWaves,nCol) VsWave
+	String currentDF = GetDataFolder(0)
+	String wName,tName
 	
-	DoWindow/K FTPlot
-	Display/N=FTPlot
+	Variable i,j
 	
-	String wList = WaveList("PM_*",";","")
-	String wName = StringFromList(0,wList) // it is probably PM_0
-	Wave PMw = $wName
-	AppendToGraph/W=FTPlot PMw[][1] vs PMw[][0]
-	ModifyGraph/W=FTPlot rgb=(0,0,0)
-	Wave FTwave
-	AppendToGraph/W=FTPlot FTwave[][1] vs FTwave[][0]
-	ModifyGraph/W=FTplot rgb(FTwave)=(127*257,0,0)
-	ModifyGraph/W=FTPlot mode(FTWave)=3,marker(FTWave)=8
-	ModifyGraph/W=FTplot width={plan,1,bottom,left}
-	ModifyGraph/W=FTplot noLabel=2,axThick=0
-	
-	Make/O/N=(2) pitStartStop = 0
-	
-	DoWindow/F FTPlot
-	ShowInfo
-	NewPanel/K=1 /W=(187,368,437,531) as "Pause for Cursor"
-	DoWindow/C tmp_PauseforCursor
-	AutoPositionWindow/E/M=1/R=FTPlot
-	
-	DrawText 21,20,"Adjust the cursores and then"
-	DrawText 21,40,"Click Continue."
-	Button button0,pos={80,58},size={92,20},title="Continue"
-	Button button0,proc=UserCursorAdjust_ContButtonProc
-	PauseForUser tmp_PauseForCursor,FTPlot
-	if (Strlen(CsrWave(A))>0 && Strlen(CsrWave(B))>0) // check cursors are on trace
-		pitStartStop[0] = pcsr(A)
-		pitStartStop[1] = pcsr(B)
-	endif
-	DoWindow/K FTPlot
+	for (i = 0; i < nWaves; i += 1)
+		wName = StringFromList(i, wList)
+		Wave w0 = $wName
+		nCol = dimsize(w0,1)
+		for (j = 0; j < nCol; j += 1)
+			WaveStats/Q/RMD=[][j] w0
+			VsWave[i][j] = V_avg
+		endfor
+		TName = CleanupName(currentDF,0) + "_" + wName
+		AppendToGraph/W=allVsPlot w0[][1]/TN=$tName vs w0[][0]
+		ModifyGraph/W=allVsPlot offset($tName)={-VsWave[i][0],-VsWave[i][1]}
+	endfor
 End
 
-// This is for marquee control
-Function UserCursorAdjust_ContButtonProc(ctrlName) : ButtonControl
-	String ctrlName
-
-	DoWindow/K tmp_PauseforCursor				// Kill self
-End
 
 Function Distance2PM()
-	Wave/Z FTWave
-	String wList = WaveList("PM_*",";","")
+	Wave/Z VsWave
+	String wList = WaveList("Mt_*",";","")
 	String wName = StringFromList(0,wList) // it is probably PM_0
 	Wave PMw = $wName
 	
-	Variable nFT = DimSize(FTWave,0)
+	Variable nFT = DimSize(VsWave,0)
 	Make/O/N=(nFT) distWave,rowPM
 	Variable i
 	
 	for (i = 0; i < nFT; i += 1)
 		Duplicate/O PMw, m0
-		m0[][] -= FTwave[i][q]
+		m0[][] -= VsWave[i][q]
 		MatrixOP/O result = m0 * m0
 		MatrixOP/O result2 = sumrows(result)
 		MatrixOP/O result3 = sqrt(result2)
