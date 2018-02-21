@@ -14,6 +14,7 @@ Function IMODModelAnalysis()
 //	MakeSummaryLayout()
 //	RotatePits()
 //	OverlayAllPits()
+	FormatPlots()
 End
 
 Function LoadIMODModels()
@@ -88,7 +89,7 @@ Function MakeObjectContourWaves()
 			elseif (i == 1)
 				wName = "Vs" // Vesicle
 			else
-				wName = "Uk" // unknown
+				wName = "Uk" + num2str(i) // unknown
 			endif
 			wName += "_" + num2str(contourVar)
 			Concatenate/O/NP=1 {xW,yW}, $wName
@@ -122,8 +123,17 @@ Function ScaleCoords(matA)
 End
 
 Function SetUpWindows()
-	KillWindow/Z allVsPlot
-	Display/N=allVsPLot
+	String windowList = "allVsPlot;allRotVsPlot;"
+	Variable nWindows = ItemsInList(windowList)
+	String PlotName
+	
+	Variable i
+	
+	for(i = 0; i < nWindows; i += 1)
+		plotName = StringFromList(i,windowList)
+		KillWindow/Z $plotName
+		Display/N=$plotName
+	endfor
 End
 
 Function ProcessAllModels()
@@ -150,7 +160,7 @@ Function FindVesicleCentresAndPlotOut()
 	String wList = WaveList("Vs_*",";","")
 	Variable nWaves = ItemsInList(wList)
 	Variable nCol = 3 // x y and z
-	Make/O/N=(nWaves,nCol) VsWave
+	Make/O/N=(nWaves,nCol) Img_VsCentre
 	String currentDF = GetDataFolder(0)
 	String wName,tName
 	
@@ -161,15 +171,60 @@ Function FindVesicleCentresAndPlotOut()
 		Wave w0 = $wName
 		nCol = dimsize(w0,1)
 		for (j = 0; j < nCol; j += 1)
-			WaveStats/Q/RMD=[][j] w0
-			VsWave[i][j] = V_avg
+			WaveStats/Q/M=1/RMD=[][j] w0
+			Img_VsCentre[i][j] = V_avg
 		endfor
+		// make a nice tracename
 		TName = CleanupName(currentDF,0) + "_" + wName
 		AppendToGraph/W=allVsPlot w0[][1]/TN=$tName vs w0[][0]
-		ModifyGraph/W=allVsPlot offset($tName)={-VsWave[i][0],-VsWave[i][1]}
+		// offset to origin
+		ModifyGraph/W=allVsPlot offset($tName)={-Img_VsCentre[i][0],-Img_VsCentre[i][1]}
+		// find eigenvectors
+		Wave w1 = FindEV(w0)
+		TName = CleanupName(currentDF,0) + "_" + NameOfWave(w1)
+		AppendToGraph/W=allRotVsPlot w1[][1]/TN=$tName vs w1[][0]
 	endfor
 End
 
+///	@param	m1	2D wave of xy coords
+Function/WAVE FindEV(m1)
+	Wave m1
+	MatrixOp/O xCoord = col(m1,0)
+	MatrixOp/O yCoord = col(m1,1)
+	
+	// translate to origin
+	Variable offX = mean(xCoord)
+	Variable offY = mean(yCoord)
+	xCoord[] -= offX
+	yCoord[] -= offY
+	// do PCA. Rotated points are in M_R
+	PCA/ALL/SEVC/SRMT/SCMT xCoord,yCoord
+	WAVE M_R
+	String mName = NameOfWave(m1) + "_r"
+	Duplicate/O M_R, $mName
+	Wave m2 = $mName
+	// now thread it so the segment is contiguous
+	InsertPoints DimSize(m2,0), 1, m2
+	m2[DimSize(m2,0)-1][] = m2[0][q]
+	Return m2
+End
+
+Function FormatPlots()
+	String windowList = "allVsPlot;allRotVsPlot;"
+	Variable nWindows = ItemsInList(windowList)
+	String PlotName
+	
+	Variable i
+	
+	for(i = 0; i < nWindows; i += 1)
+		plotName = StringFromList(i,windowList)
+		ModifyGraph/W=$plotName rgb=(29524,1,58982,6554)
+		SetAxis/W=$plotName left -50,50
+		SetAxis/W=$plotName bottom -50,50
+		ModifyGraph/W=$plotName width={Aspect,1}
+		ModifyGraph/W=$plotName mirror=1
+	endfor
+End
 
 Function Distance2PM()
 	Wave/Z VsWave
@@ -320,345 +375,25 @@ Function CollectAllMeasurements()
 	Duplicate/O wOut, xJit
 	xJit = 1 + gnoise(0.1)
 	Concatenate/O/KILL {xJit,wOut}, distWaveOut
-	MakeModelCCP()
+////	MakeModelCCP()
 End
 
-Function MakeModelCCP()
-	SetDataFolder root:
-	Wave/Z allDistInOut, allFTNormIn, allFTNormOut
-	if (!WaveExists(allDistInOut) || !WaveExists(allFTNormIn))
-		DoAlert 0, "Missing waves"
-		Return -1
-	endif
-	DoWindow/K pitPlot
-	DoWindow/K pitInPlot
-	Display/N=pitInPlot allFTNormIn[][1] vs allFTNormIn[][0]
-	ModifyGraph/W=pitInPlot mode=3,zColor(allFTNormIn)={allDistInOut,0,80,YellowHot,0}
-	ModifyGraph/W=pitInPlot width={plan,1,bottom,left}
-	ModifyGraph/W=pitInPlot noLabel=2,axThick=0
-	DoWindow/K pitOutPlot
-	Display/N=pitOutPlot allFTNormOut[][1] vs allFTNormOut[][0]
-	ModifyGraph/W=pitOutPlot mode=3,zColor(allFTNormOut)={allDistInOut,0,80,YellowHot,0}
-	ModifyGraph/W=pitOutPlot width={plan,1,bottom,left}
-	ModifyGraph/W=pitOutPlot noLabel=2,axThick=0
-	
-	Make/O/N=80 CCPWave=0,CCPColor=0
-	SetScale/P x -4,0.1,"", CCPWave
-	CCPWave[x2pnt(CCPwave,-1),x2pnt(CCPwave,1)] = sqrt(1 - (x^2))
-	CCPColor[x2pnt(CCPwave,-1),x2pnt(CCPwave,1)] = 1
-	AppendToGraph/W=pitInPlot CCPWave
-	ModifyGraph/W=pitInPlot mode(CCPWave)=0,lstyle(CCPWave)=3
-	ModifyGraph/W=pitInPlot zColor(CCPWave)={CCPColor,-4,1,PlanetEarth,0}
-	ModifyGraph/W=pitInPlot lsize(CCPWave)=2	
-	ModifyGraph/W=pitInPlot margin=10
-	SetAxis/W=pitInPlot left 2,0
-	SetAxis/W=pitInPlot bottom -4,4
-	AppendToGraph/W=pitOutPlot CCPWave
-	ModifyGraph/W=pitOutPlot mode(CCPWave)=0,lstyle(CCPWave)=3
-	ModifyGraph zColor(CCPWave)={CCPColor,0,5,PlanetEarth,1}
-	ModifyGraph/W=pitOutPlot lsize(CCPWave)=2	
-	ModifyGraph/W=pitOutPlot margin=10
-	SetAxis/W=pitOutPlot left 2,0
-	SetAxis/W=pitOutPlot bottom -4,4
-	MakeScatterPlots()
-End
-
-Function MakeScatterPlots()
-	SetDataFolder root:
-	Wave/Z distWaveIn, distWaveOut, distMean, distSD
-	if (!WaveExists(distWaveIn) || !WaveExists(distWaveOut))
-		DoAlert 0, "Missing waves"
-		Return -1
-	endif
-	DoWindow/K distPlot
-	Display/N=distPlot
-	AppendToGraph distWaveIn[][1] vs distWaveIn[][0]
-	AppendToGraph distWaveOut[][1] vs distWaveOut[][0]
-	ModifyGraph/W=distPlot mode=3,marker=19,msize=2
-	ModifyGraph/W=distPlot rgb=(65535,0,0,32768)
-	ModifyGraph mrkThick=0
-	SetAxis/W=distPlot/A/N=1/E=1 left
-	Label/W=distPlot left "Membrane proximity (nm)"
-	SetAxis/W=distPlot bottom -0.5,1.5
-	// Hard code the labels
-	Make/O/N=2 posWave = p
-	Make/O/N=2/T labelWave = {"Inside", "Outside"}
-	ModifyGraph/W=distPlot userticks(bottom)={posWave,labelWave}
-	AppendToGraph/W=distPlot distMean[][1] vs distMean[][0]
-	ModifyGraph/W=distPlot mode(distMean)=0, lsize(distMean)=2, rgb(distMean)=(0,0,0,65535)
-	AppendToGraph/W=distPlot distSD[][1] vs distSD[][0]
-	ModifyGraph/W=distPlot mode(distSD)=0, lsize(distSD)=1, rgb(distSD)=(0,0,0,65535)
-End
-
-Function RotatePits()
-	SetDataFolder root:data:	// relies on earlier load
-	DFREF dfr = GetDataFolderDFR()
-	String folderName
-	Variable numDataFolders = CountObjectsDFR(dfr, 4)
-	String wList,wName
-	Variable vStart, vStop
-	Variable cx,cy
-	Variable wx,wy
-	Variable theta
-	
-	DoWindow/K testLayout
-	NewLayout/N=testLayout
-	
-	Variable i
-		
-	for(i = 0; i < numDataFolders; i += 1)
-		folderName = GetIndexedObjNameDFR(dfr, 4, i)
-		SetDataFolder ":'" + folderName + "':"
-		PlotRotatedPit(folderName)
-		SetDataFolder root:data:
-	endfor
-	SetDataFolder root:
-	LayoutPageAction/W=testLayout size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
-	ModifyLayout/W=testLayout units=0
-	ModifyLayout/W=testLayout frame=0,trans=1
-	Execute /Q "Tile/A=(10,5)"
-End
-
-Function PlotRotatedPit(folderName)
-	String folderName
-	
-	String wList,wName
-	Variable vStart, vStop
-	Variable cx,cy
-	Variable wx,wy
-	Variable theta
-	// do translation then rotation
-	wList = WaveList("PM_*",";","")
-	wName = StringFromList(0,wList) // it is probably PM_0
-	Wave/Z PMw = $wName
-	WAVE/Z FTWave
-	WAVE/Z pitStartStop
-	// 2D only!
-	// make axis between start and stop
-	vStart = pitStartStop[0] 
-	vStop = pitStartStop[1]
-	Make/O/FREE/N=(2,2) m1 = {{PMw[vStart][0],PMw[vStop][0]},{PMw[vStart][1],PMw[vStop][1]}}
-	// find midpoint, c
-	cx = (PMw[vStart][0] + PMw[vStop][0]) / 2
-	cy = (PMw[vStart][1] + PMw[vStop][1]) / 2
-	// centre axis
-	m1[][0] -= cx
-	m1[][1] -= cy
-	// find theta and phi for axis
-	wx = m1[1][0]
-	wy = m1[1][1]
-	theta = atan2(wy,wx)
-	// Print folderName, vStart, vStop, theta
-	// rotate spindle axis
-	Make/O/FREE RotationMatrix={{cos(theta),sin(theta)},{-sin(theta),cos(theta)}} // rotate back
-	Duplicate/O/FREE/RMD=[][0,1] PMw, m0
-	m0[][0] -= cx
-	m0[][1] -= cy
-	MatrixMultiply m0, RotationMatrix
-	Wave M_Product
-	Duplicate/O M_Product rPMWave
-	Duplicate/O/FREE/RMD=[][0,1] FTwave, m0
-	m0[][0] -= cx
-	m0[][1] -= cy
-	MatrixMultiply m0, RotationMatrix
-	Duplicate/O M_Product rFTWave
-	// check if they're upside down
-	Variable pitMid = dimsize(rPMWave,0)/2
-	Duplicate/O/FREE/RMD=[pitMid-50,pitMid+50][1] rPMWave ozWave
-	if(mean(ozWave) > 0)
-		Make/O/FREE RotationMatrix={{-1,0},{0,-1}}
-		MatrixMultiply rPMWave, RotationMatrix
-		Duplicate/O M_Product rPMWave
-		MatrixMultiply rFTWave, RotationMatrix
-		Duplicate/O M_Product rFTWave
-	endif
-	KillWaves M_Product
-	// make colour wave for rPMwave
-	Make/O/N=(dimsize(rPMWave,0)) rPMColor=0
-	if (vStart > vStop)
-		rPMColor[vStop,vStart] = 1
-	else
-		rPMColor[vStart,vStop] = 1
-	endif
-	// do plot
-	String plotName = "pp_" + ReplaceString("-",folderName,"_")
-	DoWindow/K $plotName
-	Display/N=$plotName/HIDE=1
-	
-	AppendToGraph/W=$plotName rPMWave[][1] vs rPMWave[][0]
-	ModifyGraph/W=$plotName zcolor(rPMWave)={rPMColor,-1,1,Grays256,1}
-	AppendToGraph/W=$plotName rFTWave[][1] vs rFTWave[][0]
-	ModifyGraph/W=$plotName rgb(rFTWave)=(65535,127*257,127*257)
-	ModifyGraph/W=$plotName mode(rFTWave)=3,marker(rFTWave)=19
-	ModifyGraph/W=$plotName msize(rFTWave)=1.5
-	ModifyGraph/W=$plotName width={plan,1,bottom,left}
-	SetAxis/W=$plotName left -200,100
-	SetAxis/W=$plotName bottom -150,150
-	ModifyGraph/W=$plotName margin=10
-	ModifyGraph/W=$plotName noLabel=2,axThick=0
-	// add to layout
-	AppendLayoutObject/W=testLayout graph $plotName
-End
 
 // generate the figure
 Function MakeSummaryLayout()
 	DoWindow/K summaryLayout
 	NewLayout/N=summaryLayout
 
-	AppendLayoutObject/W=summaryLayout graph pitInPlot
-	AppendLayoutObject/W=summaryLayout graph pitOutPlot
-	AppendLayoutObject/W=summaryLayout graph distPlot
+//	AppendLayoutObject/W=summaryLayout graph pitInPlot
+//	AppendLayoutObject/W=summaryLayout graph pitOutPlot
+//	AppendLayoutObject/W=summaryLayout graph distPlot
 
 	LayoutPageAction size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
 	ModifyLayout units=0
 	ModifyLayout frame=0,trans=1
-	ModifyLayout left(pitInPlot)=21,top(pitInPlot)=21,width(pitInPlot)=284,height(pitInPlot)=84
-	ModifyLayout left(pitOutPlot)=21,top(pitOutPlot)=110,width(pitOutPlot)=284,height(pitOutPlot)=84
-	ModifyLayout left(distPlot)=428,top(distPlot)=21,width(distPlot)=150,height(distPlot)=150
-	ColorScale/C/N=text0/F=0/A=LT/X=50/Y=1 trace={pitInPlot,allFTNormIn}
-	ColorScale/C/N=text0 "Membrane proximity (nm)"
+//	ModifyLayout left(pitInPlot)=21,top(pitInPlot)=21,width(pitInPlot)=284,height(pitInPlot)=84
+//	ModifyLayout left(pitOutPlot)=21,top(pitOutPlot)=110,width(pitOutPlot)=284,height(pitOutPlot)=84
+//	ModifyLayout left(distPlot)=428,top(distPlot)=21,width(distPlot)=150,height(distPlot)=150
+//	ColorScale/C/N=text0/F=0/A=LT/X=50/Y=1 trace={pitInPlot,allFTNormIn}
+//	ColorScale/C/N=text0 "Membrane proximity (nm)"
 End
-
-// This will show you the pit contained in folderName
-Function ShowMePlot(folderName)
-	string folderName
-	
-	DoWindow/K FTPlot
-	Display/N=FTPlot
-	
-	SetDataFolder "root:data:'" + folderName + "':"
-	String wList = WaveList("PM_*",";","")
-	String wName = StringFromList(0,wList) // it is probably PM_0
-	Wave PMw = $wName
-	AppendToGraph/W=FTPlot PMw[][1] vs PMw[][0]
-	ModifyGraph/W=FTPlot rgb=(0,0,0)
-	Wave FTwave,distWave
-	AppendToGraph/W=FTPlot FTwave[][1] vs FTwave[][0]
-	ModifyGraph/W=FTplot rgb(FTwave)=(127*257,0,0)
-	ModifyGraph/W=FTplot zColor(FTWave)={distWave,0,150,YellowHot,1}
-	ModifyGraph/W=FTPlot mode(FTWave)=3,marker(FTWave)=8
-	ModifyGraph/W=FTplot width={plan,1,bottom,left}
-	ModifyGraph/W=FTplot noLabel=2,axThick=0
-	SetDataFolder root:
-End
-
-Function OverlayAllPits()
-	SetDataFolder root:data:	// relies on earlier load
-	DFREF dfr = GetDataFolderDFR()
-	String folderName
-	Variable numDataFolders = CountObjectsDFR(dfr, 4)
-	String wList,wName
-	
-	DoWindow/K allPitOverlay
-	Display/N=allPitOverlay
-	
-	Variable i
-	
-	for(i = 0; i < numDataFolders; i += 1)
-		folderName = GetIndexedObjNameDFR(dfr, 4, i)
-		SetDataFolder ":'" + folderName + "':"
-		WAVE/Z rPMWave
-		WAVE/Z rFTWave
-		AppendToGraph/W=allPitOverlay rPMWave[][1] vs rPMWave[][0]
-		AppendToGraph/W=allPitOverlay rFTWave[][1] vs rFTWave[][0]
-		SetDataFolder root:data:
-	endfor
-	
-	String tList = TraceNameList("allPitOverlay",";",1)
-	String tName
-	Variable nTraces = ItemsInlist(tList)
-	
-	for(i = 0; i < nTraces; i += 1)
-		tName = StringFromList(i,tList)
-		if(StringMatch(tName, "rPM*")==1)
-			ModifyGraph/W=allPitOverlay rgb($tName)=(0,0,0,16384)
-		elseif(StringMatch(tName, "rFT*")==1)
-			ModifyGraph/W=allPitOverlay rgb($tName)=(655355,0,0,32768)
-			ModifyGraph/W=allPitOverlay mode($tName)=3,marker($tName)=19
-			ModifyGraph/W=allPitOverlay msize($tName)=1.5
-		endif
-	endfor
-	
-	ModifyGraph/W=allPitOverlay width={plan,1,bottom,left}
-	SetAxis/W=allPitOverlay left -200,100
-	SetAxis/W=allPitOverlay bottom -150,150
-	ModifyGraph/W=allPitOverlay margin=10
-	ModifyGraph/W=allPitOverlay noLabel=2,axThick=0
-	// add to layout
-	AppendLayoutObject/W=testLayout graph allPitOverlay
-	ModifyLayout/W=testLayout units=0
-	ModifyLayout/W=testLayout frame=0,trans=1
-	DoWindow/F testLayout
-	Execute /Q "Tile/A=(10,5)"
-End
-
-// Additional function to look at the length of PM that is inside vs outside the pit
-Function OutsideVsInside()
-	SetDataFolder root:data:	// relies on earlier load
-	DFREF dfr = GetDataFolderDFR()
-	String folderName
-	Variable numDataFolders = CountObjectsDFR(dfr, 4)
-	Make/O/N=(numDataFolders,4) root:OVIwave // 0 = outLength, 1 = inLength, 2 = outNum, 3 = inNum
-	Wave OVIWave = root:OVIwave
-	String wList,wName
-	Variable rStart, rEnd, rFT // rows of PMw
-	
-	Variable i,j
-	Variable ii, nFT
-		
-	for(i = 0; i < numDataFolders; i += 1)
-		folderName = GetIndexedObjNameDFR(dfr, 4, i)
-		SetDataFolder ":'" + folderName + "':"
-		wList = WaveList("PM_*",";","")
-		wName = StringFromList(0,wList) // it is probably PM_0
-		Wave PMw = $wName
-		WAVE/Z cPit, distWave, rowPM, pitStartStop
-		if (pitStartStop[0] < pitStartStop[1])
-			rStart = pitStartStop[0]
-			rEnd = pitStartStop[1]
-		else
-			rStart = pitStartStop[1]
-			rEnd = pitStartStop[0]
-		endif
-		//
-		Duplicate/O/RMD=[0,rStart][0,2] PMw, w0
-		OVIWave[i][0] = ContourLength(w0)	//contour length of left side of pit
-		Duplicate/O/RMD=[rEnd,*][0,2] PMw, w0
-		OVIWave[i][0] += ContourLength(w0) // contour length of right side of pit
-		OVIWave[i][1] = cPit[0]
-		//
-		nFT = numpnts(rowPM)
-		ii = 0
-		for(j = 0; j < nFT; j += 1)
-			if(rowPM[j] < rStart || rowPM[j] > rEnd)
-				ii +=1
-			endif
-		endfor
-		OVIWave[i][2] = ii
-		OVIWave[i][3] = nFT - ii
-		KillWaves/Z w0,result,result2,result3
-		SetDataFolder root:data:
-	endfor
-	SetDataFolder root:
-	Make/O/N=(numDataFolders) w1,w2,xjit1,xjit2
-	w1 = OVIwave[p][3] / OVIWave[p][1]
-	w2 = OVIwave[p][2] / OVIWave[p][0]
-	xjit1 = 0 + gnoise(0.1)
-	Concatenate/O/KILL {w1,xJit1}, OVIfreqIn
-	xjit2 = 1 + gnoise(0.1)
-	Concatenate/O/KILL {w2,xJit2}, OVIfreqOut
-End
-
-//
-// cFT = contour length from start of pit to FT intersect on membrane
-// cPit = length of Pit
-// distWave = distance of each FT particle to PM
-// FTWave = xyz coords of FT particles
-// m0 = unknown remnant
-// pitStartStop = row numbers of PM_0 corresponding to start and stop of pit
-// PM_0 = xyz coords of PM 
-// ratioFT = ratio of cFT to cPit allows plotting spatially averaged data.
-// rFTWave = rotated FT xy coords
-// rowPM = the row of PM contour where the FT particle is closest (where distwave is measured to)
-// rPMColor = binary wave to color the pit contour
-// rPMWave = rotated PM contour wave xy coords
