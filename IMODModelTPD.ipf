@@ -16,6 +16,7 @@ Function IMODModelAnalysis()
 //	RotatePits()
 //	OverlayAllPits()
 	FormatPlots()
+	MakeTheLayouts()
 End
 
 Function LoadIMODModels()
@@ -151,6 +152,7 @@ Function ProcessAllModels()
 		// run functions from here for everything we want to do
 		FindVesicleCentresAndPlotOut()
 		MitoPerimAndArea()
+		LookAtModels()
 //		Distance2PM()
 		SetDataFolder root:data:
 	endfor
@@ -193,8 +195,16 @@ Function FindVesicleCentresAndPlotOut()
 		MatrixOp/O/FREE w1c1 = col(w1,1)
 		Img_VsArea[i] = PolygonArea(w1c0,w1c1)
 	endfor
-	MatrixOp/O Img_VsAspectRatio = Img_VsMinAxis / Img_VsMajAxis
-	MatrixOp/O Img_VsCircularity = (4 * pi * Img_VsArea) / (Img_VsPerimeter * Img_VsPerimeter)
+	if(numpnts(Img_VsArea) > 1)
+		MatrixOp/O Img_VsAspectRatio = Img_VsMinAxis / Img_VsMajAxis
+		MatrixOp/O Img_VsCircularity = (4 * pi * Img_VsArea) / (Img_VsPerimeter * Img_VsPerimeter)
+	elseif(numpnts(Img_VsArea) == 1)
+		MatrixOp/O Img_VsAspectRatio = Img_VsMinAxis / Img_VsMajAxis
+		MatrixOp/O/FREE tempMat = Img_VsPerimeter * Img_VsPerimeter
+		MatrixOp/O Img_VsCircularity = 4 * pi * tempMat
+	else
+		Print "No vesicles in", currentDF
+	endif
 End
 
 ///	@param	m1	2D wave of xy coords
@@ -299,6 +309,47 @@ Function FormatPlots()
 	endfor
 End
 
+Function LookAtModels()
+	// Plotting function to see what we have
+	String wList = WaveList("Vs_*",";","")
+	Variable nWaves = ItemsInList(wList)
+	String currentDF = GetDataFolder(0)
+	String plotName = "mod_" + CleanupName(currentDF,0)
+	KillWindow/Z $plotName
+	Display/N=$plotName/HIDE=1
+	String wName,tName
+	
+	Variable i
+	
+	for (i = 0; i < nWaves; i += 1)
+		wName = StringFromList(i, wList)
+		if(Stringmatch(wName,"*_r") == 0) // filter out rotated objects
+			Wave w0 = $wName
+			// make a nice tracename - not really necessary
+			tName = CleanupName(currentDF,0) + "_" + wName
+			AppendToGraph/W=$plotName w0[][1]/TN=$tName vs w0[][0]
+			ModifyGraph/W=$plotName rgb($tName)=(65535,0,65535) // vesicles are purple
+		endif
+	endfor
+	wList = WaveList("Mt_*",";","")
+	nWaves = ItemsInList(wList)
+	for (i = 0; i < nWaves; i += 1)
+		wName = StringFromList(i, wList)
+		Wave w0 = $wName
+		// make a nice tracename
+		tName = CleanupName(currentDF,0) + "_" + wName
+		AppendToGraph/W=$plotName w0[][1]/TN=$tName vs w0[][0]
+		ModifyGraph/W=$plotName rgb($tName)=(32767,32767,32767) // mitos are grey
+	endfor
+	// Images are 1376 x 1032
+	SetAxis/W=$plotName bottom 0,2000
+	SetAxis/W=$plotName left 2000,0
+	// scaling will be variable
+	ModifyGraph/W=$plotName width={Plan,1,bottom,left}
+	ModifyGraph/W=$plotName tick=3,mirror=1,noLabel=2,standoff=0
+	ModifyGraph/W=$plotName margin=6
+End
+
 Function Distance2PM()
 	Wave/Z VsWave
 	String wList = WaveList("Mt_*",";","")
@@ -322,59 +373,6 @@ Function Distance2PM()
 	KillWaves m0,result,result2,result3
 End
 
-Function ContourCalcs()
-	String wList = WaveList("PM_*",";","")
-	String wName = StringFromList(0,wList) // it is probably PM_0
-	Wave PMw = $wName
-	WAVE/Z distWave, rowPM, pitStartStop
-	Variable rStart, rEnd, rFT // rows of PMw
-	
-	if (pitStartStop[0] < pitStartStop[1])
-		rStart = pitStartStop[0]
-		rEnd = pitStartStop[1]
-	else
-		rStart = pitStartStop[1]
-		rEnd = pitStartStop[0]
-	endif
-	
-	Make/O/N=1 cPit
-	
-	Duplicate/O/RMD=[rStart,rEnd][0,2] PMw, pitWave
-	cPit[0] = ContourLength(pitWave) // find pit length
-	
-	Variable nFT = numpnts(rowPM)
-	Make/O/N=(nFT) cFT
-	
-	Variable i
-	
-	for (i = 0; i < nFT; i += 1)
-		rFT = rowPM[i]
-		if (rFT < rStart)
-			Duplicate/O/RMD=[rFT,rStart][0,2] PMw, FTlocWave
-			cFT[i] = ContourLength(FTLocWave) * (-1)
-		elseif (rFT == rStart)
-			cFT[i] = 0
-		else
-			Duplicate/O/RMD=[rStart,rFT][0,2] PMw, FTlocWave
-			cFT[i] = ContourLength(FTLocWave)
-		endif
-	endfor
-	Duplicate/O cFT, ratioFT
-	ratioFT /= cPit[0]
-	KillWaves/Z pitWave,FTlocWave,result,result2,result3
-End
-
-// Works out the contour length along a line
-Function ContourLength(m0)
-	Wave m0
-	
-	Differentiate/METH=1/EP=1/DIM=0 m0
-	MatrixOP/O result = m0 * m0
-	MatrixOP/O result2 = sumrows(result)
-	MatrixOP/O result3 = sqrt(result2)
-	Return sum(result3)
-End
-
 Function CollectAllMeasurements()
 	SetDataFolder root:data:	// relies on earlier load
 	DFREF dfr = GetDataFolderDFR()
@@ -395,12 +393,22 @@ Function CollectAllMeasurements()
 	String targetName, tList, conName
 	
 	SetDataFolder root:
+	String fullName,modtList
 	
 	for(i = 0; i < nTargets; i += 1)
 		targetName = StringFromList(i,targetWaveList)
 		tList = ReplaceString("thisWave",wList,targetName)
+		modtList = tList
+		// because some waves might not exist
+		for(j = 0; j < numDataFolders; j +=1)
+			fullName = StringFromList(j, tList)
+			Wave testW = $fullName
+			if(!WaveExists(testW))
+				modtList = RemoveFromList(fullName,modtList)
+			endif
+		endfor
 		conName = ReplaceString("Img_",targetName,"All_")
-		Concatenate/O/NP=0 tList, $conName
+		Concatenate/O/NP=0 modtList, $conName
 	endfor
 	
 	// redefine targetList for summation of each folder into row of sum_* wave
@@ -436,26 +444,41 @@ Function CollectAllMeasurements()
 		Wave tW0 = $tName
 		Count_Mt[i] = numpnts(tW0)
 	endfor
+	WAVE/Z Sum_MtPerimeter,Sum_VsPerimeter
+	MatrixOp/O Ratio_CountVsPerCountMito = Count_Vs / Count_Mt
+	MatrixOp/O Ratio_CountVsPerSumMitoPerim = Count_Vs / Sum_MtPerimeter
+	MatrixOp/O Ratio_SumVsPerimPerSumMitoPerim = Sum_VsPerimeter / Count_Mt
 End
 
-
 // generate the figure
-Function MakeSummaryLayout()
-	DoWindow/K summaryLayout
-	NewLayout/N=summaryLayout
-
-//	AppendLayoutObject/W=summaryLayout graph pitInPlot
-//	AppendLayoutObject/W=summaryLayout graph pitOutPlot
-//	AppendLayoutObject/W=summaryLayout graph distPlot
-
-	LayoutPageAction size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
-	ModifyLayout units=0
-	ModifyLayout frame=0,trans=1
-//	ModifyLayout left(pitInPlot)=21,top(pitInPlot)=21,width(pitInPlot)=284,height(pitInPlot)=84
-//	ModifyLayout left(pitOutPlot)=21,top(pitOutPlot)=110,width(pitOutPlot)=284,height(pitOutPlot)=84
-//	ModifyLayout left(distPlot)=428,top(distPlot)=21,width(distPlot)=150,height(distPlot)=150
-//	ColorScale/C/N=text0/F=0/A=LT/X=50/Y=1 trace={pitInPlot,allFTNormIn}
-//	ColorScale/C/N=text0 "Membrane proximity (nm)"
+Function MakeTheLayouts()
+	DoWindow/K modelLayout
+	NewLayout/N=modelLayout
+	String modList = WinList("mod_*",";","WIN:1")
+	Variable nWindows = ItemsInList(modList)
+	Variable PlotsPerPage = 15 // 5 x 3
+	String plotName
+	String exString = "Tile/A=(" + num2str(ceil(PlotsPerPage/3)) + ",3)"
+	
+	Variable i,pgNum=1
+	
+	for(i = 0; i < nWindows; i += 1)
+		plotName = StringFromList(i,modList)
+		AppendLayoutObject/W=modelLayout/PAGE=(pgnum) graph $plotName
+		if(mod((i + 1),PlotsPerPage) == 0 || i == (nWindows -1)) // if page is full or it's the last plot
+			LayoutPageAction/W=modelLayout size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
+			ModifyLayout/W=modelLayout units=0
+			ModifyLayout/W=modelLayout frame=0,trans=1
+			Execute /Q exString
+			if (i != nWindows -1)
+				LayoutPageAction/W=modelLayout appendpage
+				pgNum += 1
+				LayoutPageAction/W=modelLayout page=(pgNum)
+			endif
+		endif
+	endfor
+	SavePICT/PGR=(1,-1)/E=-2/W=(0,0,0,0) as "models.pdf"
+	
 End
 
 //
