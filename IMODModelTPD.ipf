@@ -95,6 +95,15 @@ Function MakeObjectContourWaves()
 			endif
 			wName += "_" + num2str(contourVar)
 			Concatenate/O/NP=1 {xW,yW}, $wName
+			if(i == 1)
+				// if it's a vesicle, close it if it's not already closed 
+				Wave cW = $wName // contour wave
+				if(cW[DimSize(cW,0)-1][0] != cW[0][0] && cW[DimSize(cW,0)-1][1] != cW[0][1])
+					InsertPoints DimSize(cW,0), 1, cW
+					cW[DimSize(cW,0)-1][] = cW[0][q]
+				endif
+			endif
+			
 		endfor
 	endfor
 	KillWaves/Z matA,filtObj,UniqueContours
@@ -121,7 +130,9 @@ Function ScaleCoords(matA)
 	
 	pxSize = PixelSize[V_Value]
 	matA[][2,4] *= pxSize
-	// Print txtName, pxSize
+	// Make a wave to hold the PixelSize to save looking it up again
+	String dimensionWaveName = "DimensionWave"
+	Make/O/N=(1) $dimensionWaveName={pxSize}
 End
 
 Function SetUpWindows()
@@ -153,6 +164,7 @@ Function ProcessAllModels()
 		FindVesicleCentresAndPlotOut()
 		MitoPerimAndArea()
 		LookAtModels()
+		IPClusters()
 //		Distance2PM()
 		SetDataFolder root:data:
 	endfor
@@ -263,9 +275,6 @@ Function/WAVE FindEV(m1)
 	String mName = NameOfWave(m1) + "_r"
 	Duplicate/O M_R, $mName
 	Wave m2 = $mName
-	// now thread it so the segment is contiguous
-	InsertPoints DimSize(m2,0), 1, m2
-	m2[DimSize(m2,0)-1][] = m2[0][q]
 	Return m2
 End
 
@@ -348,6 +357,76 @@ Function LookAtModels()
 	ModifyGraph/W=$plotName width={Plan,1,bottom,left}
 	ModifyGraph/W=$plotName tick=3,mirror=1,noLabel=2,standoff=0
 	ModifyGraph/W=$plotName margin=6
+End
+
+// This function will use ImageProcessing to define vesicle clusters
+Function IPClusters()
+	// we should be in a subfolder of data at this point
+	// turn each vesicle wave into a blob on an image
+	String wList = RemoveFromList(WaveList("Vs_*_r",";",""),WaveList("Vs_*",";",""))
+	Variable nWaves = ItemsInList(wList)
+	if(nWaves == 0)
+		Make/O/N=50 Img_ClusterSizes=0
+		return -1
+	endif
+	String currentDF = GetDataFolder(0)
+	String wName
+	WAVE/Z DimensionWave
+	Variable imgWidth = ceil(1376 * DimensionWave[0]) + 1
+	Variable imgHeight = ceil(1032 * DimensionWave[0]) + 1
+	Make/O/B/U/N=(imgWidth,imgHeight) mat_Particles=0,mat_Clusters=0
+	
+	Variable i
+	
+	for(i = 0; i < nWaves; i += 1)
+		wName = StringFromList(i, wList)
+		Wave vsW = $wName
+		MatrixOp/O/FREE xW0 = col(vsW,0)
+		MatrixOp/O/FREE yW0 = col(vsW,1)
+		ImageBoundaryToMask width=imgWidth,height=imgHeight,xWave=xW0,yWave=yW0,seedx=floor(mean(xW0)),seedy=floor(mean(yW0)) 
+		WAVE/Z M_ROIMask
+		// check what the result is here
+		mat_Particles[][] += M_ROIMask
+	endfor
+	// now dilate mat_Particles
+	// dilation is number of pixels must correspond to 0.5 vesicle width,i.e. 15nm
+	Variable nPx = ceil(15 / DimensionWave[0])
+	ImageMorphology/E=6/I=(nPx) dilation mat_Particles
+	WAVE/Z M_ImageMorph
+	// Threshold this result (bg is 255 and blobs are 0)
+	ImageThreshold/I/Q/M=1 M_ImageMorph
+	WAVE/Z M_ImageThresh
+	ImageAnalyzeParticles/Q/A=2/W/M=2 stats M_ImageThresh
+	WAVE/Z W_spotX,W_spotY
+	Variable nSpots = numpnts(W_spotX)
+	for(i = 0; i < nSpots; i += 1)
+		ImageAnalyzeParticles/L=(W_spotX[i],W_spotY[i]) mark M_ImageThresh
+		WAVE/Z M_ParticleMarker
+		mat_Clusters[][] = (M_ParticleMarker[p][q] == 0) ? (i + 1) : mat_Clusters[p][q]
+	endfor
+	WAVE/Z Img_VsCentre
+	nWaves = dimSize(Img_VsCentre,0)
+	// now let's get a list of which clusterID each vesicle belongs to
+	Make/O/N=(nWaves) Img_VsClusterID
+	for(i = 0; i < nWaves; i += 1)
+		Img_VsClusterID[i] = mat_Clusters[floor(Img_VsCentre[i][0])][floor(Img_VsCentre[i][1])]
+	endfor
+	// How many members in each cluster?
+	Variable nID = WaveMax(Img_VsClusterID)
+	Make/O/N=(nID) Img_IdMembers
+	Variable j, counter
+	for(i = 0; i < nID; i += 1)
+		counter = 0
+		for(i = 0; i < nWaves; i += 1)
+			if(Img_VsClusterID[j] == i)
+				counter += 1
+			endif
+		endfor
+		Img_IdMembers[i] = counter
+	endfor
+	Make/O/N=50 Img_ClusterSizes
+	Histogram/B={0,1,50} Img_IDMembers,Img_ClusterSizes
+	KillWaves/Z M_ImageMorph,M_ImageThresh,M_ParticleArea,M_ParticleMarker,M_ROIMask
 End
 
 Function Distance2PM()
