@@ -12,9 +12,6 @@ Function IMODModelAnalysis()
 	SetUpWindows()
 	ProcessAllModels()
 	CollectAllMeasurements()
-//	MakeSummaryLayout()
-//	RotatePits()
-//	OverlayAllPits()
 	FormatPlots()
 	MakeTheLayouts()
 End
@@ -98,12 +95,15 @@ Function MakeObjectContourWaves()
 			if(i == 1)
 				// if it's a vesicle, close it if it's not already closed 
 				Wave cW = $wName // contour wave
-				if(cW[DimSize(cW,0)-1][0] != cW[0][0] && cW[DimSize(cW,0)-1][1] != cW[0][1])
+				if(cW[DimSize(cW,0)-1][0] != cW[0][0] || cW[DimSize(cW,0)-1][1] != cW[0][1])
 					InsertPoints DimSize(cW,0), 1, cW
 					cW[DimSize(cW,0)-1][] = cW[0][q]
 				endif
+				// delete if it's just 1-3 pixels?
+				if(DimSize(cW,0) < 4)
+					KillWaves cW
+				endif
 			endif
-			
 		endfor
 	endfor
 	KillWaves/Z matA,filtObj,UniqueContours
@@ -162,10 +162,10 @@ Function ProcessAllModels()
 		SetDataFolder ":'" + folderName + "':"
 		// run functions from here for everything we want to do
 		FindVesicleCentresAndPlotOut()
-		MitoPerimAndArea()
+//		MitoPerimAndArea()
 		LookAtModels()
 		IPClusters()
-//		Distance2PM()
+		IPMitos()
 		SetDataFolder root:data:
 	endfor
 	SetDataFolder root:
@@ -261,8 +261,8 @@ End
 ///	@param	m1	2D wave of xy coords
 Function/WAVE FindEV(m1)
 	Wave m1
-	MatrixOp/O xCoord = col(m1,0)
-	MatrixOp/O yCoord = col(m1,1)
+	MatrixOp/O/FREE xCoord = col(m1,0)
+	MatrixOp/O/FREE yCoord = col(m1,1)
 	
 	// translate to origin
 	Variable offX = mean(xCoord)
@@ -278,6 +278,9 @@ Function/WAVE FindEV(m1)
 	Return m2
 End
 
+// possibly delete this function?
+// We don't really need MTArea.
+// MTPerimeter can be found using IP methods
 Function MitoPerimAndArea()
 	// finding the centre of each vesicle and placing coords into a wave called VsWave
 	String wList = WaveList("Mt_*",";","")
@@ -413,11 +416,11 @@ Function IPClusters()
 	endfor
 	// How many members in each cluster?
 	Variable nID = WaveMax(Img_VsClusterID)
-	Make/O/N=(nID) Img_IdMembers
+	Make/O/N=(nID+1) Img_IdMembers
 	Variable j, counter
 	for(i = 0; i < nID; i += 1)
 		counter = 0
-		for(i = 0; i < nWaves; i += 1)
+		for(j = 0; j < nWaves; j += 1)
 			if(Img_VsClusterID[j] == i)
 				counter += 1
 			endif
@@ -426,30 +429,43 @@ Function IPClusters()
 	endfor
 	Make/O/N=50 Img_ClusterSizes
 	Histogram/B={0,1,50} Img_IDMembers,Img_ClusterSizes
+	// Now get rid of the matrices we don't need
 	KillWaves/Z M_ImageMorph,M_ImageThresh,M_ParticleArea,M_ParticleMarker,M_ROIMask
+	// KillWaves mat_Particles
 End
 
-Function Distance2PM()
-	Wave/Z VsWave
+// Function to do image processing on mito perimeters
+Function IPMitos()
+	// we are in image data folder
+	// I checked, negligible difference taking cartesian distance of points differs from imageborder method
 	String wList = WaveList("Mt_*",";","")
-	String wName = StringFromList(0,wList) // it is probably PM_0
-	Wave PMw = $wName
+	Variable nWaves = ItemsInList(wList)
+	Make/O/N=(nWaves) Img_MtPeriTotal,Img_MTPeriNude
+	String currentDF = GetDataFolder(0)
+	WAVE/Z DimensionWave, mat_Clusters
+	Make/O/B/U/N=(dimsize(mat_Clusters,0),dimsize(mat_Clusters,1))/FREE clusterMask
+	// mat_clusters has bg of 0 and clusters with different ID numbers
+	// make it a mask of non-cluster areas
+	clusterMask[][] = (mat_Clusters[p][q] == 0) ? 1 : 0
+	String wName
 	
-	Variable nFT = DimSize(VsWave,0)
-	Make/O/N=(nFT) distWave,rowPM
 	Variable i
 	
-	for (i = 0; i < nFT; i += 1)
-		Duplicate/O PMw, m0
-		m0[][] -= VsWave[i][q]
-		MatrixOP/O result = m0 * m0
-		MatrixOP/O result2 = sumrows(result)
-		MatrixOP/O result3 = sqrt(result2)
-		WaveStats/Q result3
-		distWave[i] = V_min
-		rowPM[i] = V_minLoc
+	for (i = 0; i < nWaves; i += 1)
+		wName = StringFromList(i, wList)
+		Wave w0 = $wName
+		MatrixOp/O/FREE w0c0 = col(w0,0)
+		MatrixOp/O/FREE w0c1 = col(w0,1)
+		ImageBoundaryToMask width=ceil(1376*dimensionwave[0])+1,height=ceil(1032*dimensionwave[0])+1,xWave=w0c0,yWave=w0c1
+		WAVE/Z M_ROIMask
+		// sum of this wave is the mitochondrial perimeter, although mask is 255 not 1
+		Img_MtPeriTotal[i] = sum(M_ROIMask) / 255
+		// find the mito perimeter which is not overlapping with clusters
+		MatrixOp/O/FREE resultMat = M_ROIMask * clusterMask
+		Img_MtPeriNude[i] = sum(resultMat) / 255
+		// Fraction of Mito Perimeter that is decorated with Vesicles
+		MatrixOp/O Img_MtPeriDec = (Img_MtPeriTotal - Img_MtPeriNude) / Img_MtPeriTotal
 	endfor
-	KillWaves m0,result,result2,result3
 End
 
 Function CollectAllMeasurements()
@@ -467,7 +483,8 @@ Function CollectAllMeasurements()
 	endfor
 	
 	// we need to concatenate these waves into root (all_*)
-	String targetWaveList = "Img_VsArea;Img_VsAspectRatio;Img_VsCentre;Img_VsCircularity;Img_VsMajAxis;Img_VsMinAxis;Img_VsPerimeter;Img_MtArea;Img_MtPerimeter;"
+	String targetWaveList = "Img_VsArea;Img_VsAspectRatio;Img_VsCentre;Img_VsCircularity;Img_VsMajAxis;Img_VsMinAxis;Img_VsPerimeter;"
+	targetWaveList += "Img_MtPeriTotal;Img_MtPeriNude;Img_MtPeriDec;"
 	Variable nTargets = ItemsInList(targetWaveList)
 	String targetName, tList, conName
 	
@@ -491,7 +508,7 @@ Function CollectAllMeasurements()
 	endfor
 	
 	// redefine targetList for summation of each folder into row of sum_* wave
-	targetWaveList = "Img_VsArea;Img_VsPerimeter;Img_MtArea;Img_MtPerimeter;"
+	targetWaveList = "Img_VsArea;Img_VsPerimeter;Img_MtPeriTotal;"
 	nTargets = ItemsInList(targetWaveList)
 	String wName,tName
 	for(i = 0; i < nTargets; i += 1)
@@ -516,7 +533,7 @@ Function CollectAllMeasurements()
 		Wave tW0 = $tName
 		Count_Vs[i] = numpnts(tW0)
 	endfor
-	targetName = "Img_MtArea"
+	targetName = "Img_MtPeriTotal"
 	tList = ReplaceString("thisWave",wList,targetName)
 	for(i = 0; i < numDataFolders; i += 1)
 		tName = StringFromList(i,tList)
@@ -527,6 +544,14 @@ Function CollectAllMeasurements()
 	MatrixOp/O Ratio_CountVsPerCountMito = Count_Vs / Count_Mt
 	MatrixOp/O Ratio_CountVsPerSumMitoPerim = Count_Vs / Sum_MtPerimeter
 	MatrixOp/O Ratio_SumVsPerimPerSumMitoPerim = Sum_VsPerimeter / Count_Mt
+	
+	// now we will pull the Img_ClusterSizes into a matrix
+	targetName = "Img_ClusterSizes"
+	tList = ReplaceString("thisWave",wList,targetName)
+	conName = ReplaceString("Img_",targetName,"All_")
+	Concatenate/O/NP=1/FREE tList, tempMat
+	// Img_ClusterSizes lists the number of clusters containing n vesicles, so we'll find the average
+	MatrixOp/O $conName = sumRows(tempMat) / numCols(tempMat)
 End
 
 // generate the figure
@@ -584,3 +609,18 @@ Function CleanSlate()
 //		KillDataFolder $name		
 //	endfor
 End
+
+///////////////////////////////////////////////////////////////
+// Wave explainer
+///////////////////////////////////////////////////////////////
+//For each image a DF inside root:data: exists it has 
+//Mt_n pointset to outline a mitochondrion in the image (not closed)
+//Vs_n pointset to outline a vesicle in the image (closed)
+//Vs_n_r vesicle pointset that is rotated to align all vesicles
+//DimensionWave holds the dimensions of the image in nm. Taken from the image size and a lookup from pixelSize wave in root
+//Img_* waves hold data about the things in the image.
+//	Img_Vs* hold data about the vesicles (one row per vesicle)
+//	Img_MT* hold data about the mitochondria (one row per mito)
+//	Img_IdMembers holds data about vesicle clusters (number of vesicles in each cluster id, clusters have a unique id)
+//	Img_ClusterSizes is a histogram that looks at the frequency of 1 vesicle clusters, 5 vesicle clusters etc.
+//	
