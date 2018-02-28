@@ -106,7 +106,7 @@ Function MakeObjectContourWaves()
 			endif
 		endfor
 	endfor
-	KillWaves/Z matA,filtObj,UniqueContours
+	KillWaves/Z filtObj,UniqueContours
 End
 
 ///	@param	matA	wave reference to matrix
@@ -162,10 +162,10 @@ Function ProcessAllModels()
 		SetDataFolder ":'" + folderName + "':"
 		// run functions from here for everything we want to do
 		FindVesicleCentresAndPlotOut()
-//		MitoPerimAndArea()
 		LookAtModels()
 		IPClusters()
 		IPMitos()
+		LookUpVesicleNeighbours()
 		SetDataFolder root:data:
 	endfor
 	SetDataFolder root:
@@ -208,12 +208,12 @@ Function FindVesicleCentresAndPlotOut()
 		Img_VsArea[i] = PolygonArea(w1c0,w1c1)
 	endfor
 	if(numpnts(Img_VsArea) > 1)
-		MatrixOp/O Img_VsAspectRatio = Img_VsMinAxis / Img_VsMajAxis
-		MatrixOp/O Img_VsCircularity = (4 * pi * Img_VsArea) / (Img_VsPerimeter * Img_VsPerimeter)
+		MatrixOp/O/NTHR=0 Img_VsAspectRatio = Img_VsMinAxis / Img_VsMajAxis
+		MatrixOp/O/NTHR=0 Img_VsCircularity = (4 * pi * Img_VsArea) / (Img_VsPerimeter * Img_VsPerimeter)
 	elseif(numpnts(Img_VsArea) == 1)
-		MatrixOp/O Img_VsAspectRatio = Img_VsMinAxis / Img_VsMajAxis
-		MatrixOp/O/FREE tempMat = Img_VsPerimeter * Img_VsPerimeter
-		MatrixOp/O Img_VsCircularity = 4 * pi * tempMat
+		MatrixOp/O/NTHR=0 Img_VsAspectRatio = Img_VsMinAxis / Img_VsMajAxis
+		MatrixOp/O/FREE/NTHR=0 tempMat = Img_VsPerimeter * Img_VsPerimeter
+		MatrixOp/O/NTHR=0 Img_VsCircularity = 4 * pi * tempMat
 	else
 		Print "No vesicles in", currentDF
 	endif
@@ -252,7 +252,7 @@ Function FindLengthOfXYCoords(m1)
 	// Differentiate, backward difference
 	Differentiate/METH=2 tempDist
 	// find norm, cumlative distance
-	MatrixOp/O/FREE tempNorm = sqrt(sumRows(tempDist * tempDist))
+	MatrixOp/O/FREE/NTHR=0 tempNorm = sqrt(sumRows(tempDist * tempDist))
 	tempNorm[0] = 0 // first point is garbage
 	// return the sum of distances
 	return sum(tempNorm)
@@ -276,32 +276,6 @@ Function/WAVE FindEV(m1)
 	Duplicate/O M_R, $mName
 	Wave m2 = $mName
 	Return m2
-End
-
-// possibly delete this function?
-// We don't really need MTArea.
-// MTPerimeter can be found using IP methods
-Function MitoPerimAndArea()
-	// finding the centre of each vesicle and placing coords into a wave called VsWave
-	String wList = WaveList("Mt_*",";","")
-	Variable nWaves = ItemsInList(wList)
-	Make/O/N=(nWaves) Img_MtPerimeter,Img_MtArea
-	String currentDF = GetDataFolder(0)
-	String wName,tName
-	
-	Variable i
-	
-	for (i = 0; i < nWaves; i += 1)
-		wName = StringFromList(i, wList)
-		Wave w0 = $wName
-		Duplicate/O/FREE w0, tempMat
-		InsertPoints DimSize(tempMat,0), 1, tempMat
-		tempMat[DimSize(tempMat,0)-1][] = tempMat[0][q]
-		Img_MtPerimeter[i] = FindLengthOfXYCoords(tempMat)
-		MatrixOp/O/FREE w1c0 = col(tempMat,0)
-		MatrixOp/O/FREE w1c1 = col(tempMat,1)
-		Img_MtArea[i] = PolygonArea(w1c0,w1c1)
-	endfor
 End
 
 Function FormatPlots()
@@ -461,11 +435,137 @@ Function IPMitos()
 		// sum of this wave is the mitochondrial perimeter, although mask is 255 not 1
 		Img_MtPeriTotal[i] = sum(M_ROIMask) / 255
 		// find the mito perimeter which is not overlapping with clusters
-		MatrixOp/O/FREE resultMat = M_ROIMask * clusterMask
+		MatrixOp/O/FREE/NTHR=0 resultMat = M_ROIMask * clusterMask
 		Img_MtPeriNude[i] = sum(resultMat) / 255
 		// Fraction of Mito Perimeter that is decorated with Vesicles
-		MatrixOp/O Img_MtPeriDec = (Img_MtPeriTotal - Img_MtPeriNude) / Img_MtPeriTotal
+		MatrixOp/O/NTHR=0 Img_MtPeriDec = (Img_MtPeriTotal - Img_MtPeriNude) / Img_MtPeriTotal
 	endfor
+End
+
+Function LookUpVesicleNeighbours()
+	// we are in a data folder
+	String vsList = RemoveFromList(WaveList("Vs_*_r",";",""),WaveList("Vs_*",";",""))
+	String mtList = WaveList("Mt_*",";","")
+	Variable nVs = ItemsInList(VsList)
+	if(nVs == 0)
+		return -1
+	endif
+	Variable mMt = ItemsInList(MtList)
+	Make/O/N=(nVs) Img_VsVsNN, Img_VsVsNNRef, Img_VsMtNN
+	String currentDF = GetDataFolder(0)
+	WAVE/Z DimensionWave, Img_VsCentre, matA
+	
+	// is this needed? Could possibly delete
+	// find distance from each vesicle centre to every other vesicle centre
+	Make/O/N=(nVs,nVs)/D/FREE mat_VsDist
+	mat_VsDist[][] = (p == q) ? NaN : sqrt((Img_VsCentre[p][0] - Img_VsCentre[q][0])^2 + (Img_VsCentre[p][1] - Img_VsCentre[q][1])^2)
+	// now deduce which column is closest per row use that to search for closest approach
+	Variable i
+	
+	for (i = 0; i < nVs; i += 1)
+		WaveStats/M=1/Q/RMD=[][i] mat_VsDist
+		Img_VsVsNNRef[i] = V_minRowLoc
+	endfor
+	
+	String wName0
+	Variable loX,hiX,loY,hiY
+	Variable lowVar
+	// Make list of all XY coords (similar to original import)
+	for (i = 0; i < nVs; i += 1)
+		wName0 = StringFromList(i,VsList)
+		Wave Vs0 = $wName0
+		WaveStats/Q/M=1/RMD=[][0] Vs0
+		loX = V_min - 20
+		hiX = V_max + 20
+		WaveStats/Q/M=1/RMD=[][1] Vs0
+		loY = V_min - 20
+		hiY = V_max + 20
+		Wave MatTarget = MakeTempMat(matA,0,i,loX,hiX,loY,hiY)
+		Make/O/N=(dimsize(Vs0,0),dimsize(MatTarget,0),2)/FREE cc // difference between each point, x in layer 0, y in layer 1
+		MatrixTranspose MatTarget
+		cc[][][0] = Vs0[p][0] - MatTarget[0][p]
+		cc[][][1] = Vs0[p][1] - MatTarget[1][p] // subtract each point in bb from each point in aa
+		MatrixOp/O/FREE dd = cc * cc
+		MatrixOp/O/FREE ee = sumbeams(dd)
+		MatrixOp/O/FREE ff = sqrt(ee) // 2D wave of all distances
+		WaveStats/Q/M=1 ff
+		lowVar = V_Min
+		// nearest distance
+		Img_VsVsNN[i] = lowVar
+		KillWaves MatTarget
+	endfor
+	
+	// Sort them according to X then Y with a third column for vesicle number fourth column for mito or vesicle
+	// extract the vesicle of interest
+	// extract from the list everythig within 20 nm of the vesicle of interest coordinate set
+	// do pairwise distance search between the 2 coord sets
+	// find minimum
+	// store it for that vesicle
+	
+	
+	
+//	for (i = 0; i < nVs; i += 1)
+//		for (j = 0; j < nVs; j += 1)
+//			if( i == j)
+//				continue
+//			endif
+//			
+//			Duplicate/O/FREE Vs0, m0
+//			m0[][] -= Img_VsCentre[j][q]
+//			MatrixOP/O/FREE/NTHR=0 result = sqrt(sumrows(m0 * m0)
+//			lowestVar = min(WaveMin(result),lowestVar)
+//			if (lowestVar == WaveMin(result))
+//				Img_VsVsNNRef[i] = j
+//			endif
+//		endfor
+//	
+//	for (i = 0; i < nVs; i += 1)
+//		wName0 = StringFromList(i,VsList)
+//		Wave Vs0 = $wName0
+//		for (j = 0; j < nVs; j += 1)
+//			if( i == j)
+//				continue
+//			endif
+//			
+////			wName1 = StringFromList(j,VsList)
+////			Wave Vs1 = $wName1
+//			Duplicate/O/FREE Vs0, m0
+//			m0[][] -= Img_VsCentre[j][q]
+
+//			lowestVar = min(WaveMin(result),lowestVar)
+//			if (lowestVar == WaveMin(result))
+//				Img_VsVsNNRef[i] = j
+//			endif
+//		endfor
+//		distWave[i] = V_min
+//		rowPM[i] = V_minLoc
+//	endfor
+End
+
+///	@param	m0	matrix that contains coords and object and contour id
+///	@param	objectV	variable that defines 0 = Mt, 1 = Vs
+///	@param	contourV	variable that defines which contour we are working with (removing)
+///	@param	loX	variable set lower limit for X (left side)
+///	@param	hiX	variable set upper limit for X (right side)
+///	@param	loY	variable set lower limit for Y (top side)
+///	@param	hiY	variable set upper limit for Y (bottom side)
+STATIC Function/WAVE MakeTempMat(m0,objectV,contourV,loX,hiX,loY,hiY)
+	Wave m0
+	Variable objectV,contourV,loX,hiX,loY,hiY
+	Duplicate/O/FREE m0, m1
+	// exclude the vesicle contour we're working with
+	m1[][2,3] = (m1[p][0] == 0 && m1[p][1] == contourV) ? NaN : m1[p][q]
+	// exclude everything but the object we're looking for
+	m1[][2,3] = (m1[p][0] == objectV) ? m1[p][q] : NaN
+	// exclude everything outside the limits
+	m1[][2,3] = (m1[p][2] > loX && m1[p][2] < hiX) ? m1[p][q] : NaN
+	m1[][2,3] = (m1[p][3] > loY && m1[p][3] < hiY) ? m1[p][q] : NaN
+	MatrixOp/O/FREE m1c2 = col(m1,2)
+	MatrixOp/O/FREE m1c3 = col(m1,3)
+	WaveTransform zapnans m1c2
+	WaveTransform zapnans m1c3
+	Concatenate/O/KILL {m1c2,m1c3}, MatTarget
+	Return MatTarget
 End
 
 Function CollectAllMeasurements()
@@ -540,9 +640,9 @@ Function CollectAllMeasurements()
 		Wave tW0 = $tName
 		Count_Mt[i] = numpnts(tW0)
 	endfor
-	WAVE/Z Sum_MtPerimeter,Sum_VsPerimeter
+	WAVE/Z Sum_MtPeriTotal,Sum_VsPerimeter
 	MatrixOp/O Ratio_CountVsPerCountMito = Count_Vs / Count_Mt
-	MatrixOp/O Ratio_CountVsPerSumMitoPerim = Count_Vs / Sum_MtPerimeter
+	MatrixOp/O Ratio_CountVsPerSumMitoPerim = Count_Vs / Sum_MtPeriTotal
 	MatrixOp/O Ratio_SumVsPerimPerSumMitoPerim = Sum_VsPerimeter / Count_Mt
 	
 	// now we will pull the Img_ClusterSizes into a matrix
@@ -551,7 +651,7 @@ Function CollectAllMeasurements()
 	conName = ReplaceString("Img_",targetName,"All_")
 	Concatenate/O/NP=1/FREE tList, tempMat
 	// Img_ClusterSizes lists the number of clusters containing n vesicles, so we'll find the average
-	MatrixOp/O $conName = sumRows(tempMat) / numCols(tempMat)
+	MatrixOp/O/NTHR=0 $conName = sumRows(tempMat) / numCols(tempMat)
 End
 
 // generate the figure
@@ -623,4 +723,17 @@ End
 //	Img_MT* hold data about the mitochondria (one row per mito)
 //	Img_IdMembers holds data about vesicle clusters (number of vesicles in each cluster id, clusters have a unique id)
 //	Img_ClusterSizes is a histogram that looks at the frequency of 1 vesicle clusters, 5 vesicle clusters etc.
-//	
+// Img_MtPeriTotal (total mitochondria perimeter)
+// Img_MtPeriNude (mitochondria perimeter with no vesicles attached)
+// Img_MtPeriDec (ratio of decorated mitochondrial perimeter to total) per mitochondrion
+//In root we pull out the waves and concatenate them
+// Img_VsArea
+// Img_VsAspectRatio
+// Img_VsCircularity
+// Img_VsMajAxis
+// Img_VsMinAxis
+// Img_VsPerimeter
+// Img_MtPeriTotal
+//These are all concatenated /NP=0 to give a big long list of all of them
+//For Img_ClusterSizes concatenation is /NP=1 and then an average is made (average distribution of cluster sizes across all images)
+//Also, Ratio_*, Count_*, Sum_* and Total_* waves are made and these have the same number of points as the number of data folders
