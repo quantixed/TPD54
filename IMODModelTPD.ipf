@@ -342,16 +342,16 @@ Function IPClusters()
 	// turn each vesicle wave into a blob on an image
 	String wList = RemoveFromList(WaveList("Vs_*_r",";",""),WaveList("Vs_*",";",""))
 	Variable nWaves = ItemsInList(wList)
-	if(nWaves == 0)
-		Make/O/N=50 Img_ClusterSizes=0
-		return -1
-	endif
 	String currentDF = GetDataFolder(0)
 	String wName
 	WAVE/Z DimensionWave
 	Variable imgWidth = ceil(1376 * DimensionWave[0]) + 1
 	Variable imgHeight = ceil(1032 * DimensionWave[0]) + 1
 	Make/O/B/U/N=(imgWidth,imgHeight) mat_Particles=0,mat_Clusters=0
+	if(nWaves == 0)
+		Make/O/N=50 Img_ClusterSizes=0
+		return -1
+	endif
 	
 	Variable i
 	
@@ -417,6 +417,9 @@ Function IPMitos()
 	Make/O/N=(nWaves) Img_MtPeriTotal,Img_MTPeriNude
 	String currentDF = GetDataFolder(0)
 	WAVE/Z DimensionWave, mat_Clusters
+	if(!WaveExists(mat_Clusters))
+		
+	endif
 	Make/O/B/U/N=(dimsize(mat_Clusters,0),dimsize(mat_Clusters,1))/FREE clusterMask
 	// mat_clusters has bg of 0 and clusters with different ID numbers
 	// make it a mask of non-cluster areas
@@ -450,96 +453,125 @@ Function LookUpVesicleNeighbours()
 	if(nVs == 0)
 		return -1
 	endif
-	Variable mMt = ItemsInList(MtList)
-	Make/O/N=(nVs) Img_VsVsNN, Img_VsVsNNRef, Img_VsMtNN
+	Variable nMt = ItemsInList(MtList)
+	Make/O/N=(nVs) Img_VsVsNN, Img_VsMtNN
 	String currentDF = GetDataFolder(0)
-	WAVE/Z DimensionWave, Img_VsCentre, matA
-	
-	// is this needed? Could possibly delete
-	// find distance from each vesicle centre to every other vesicle centre
-	Make/O/N=(nVs,nVs)/D/FREE mat_VsDist
-	mat_VsDist[][] = (p == q) ? NaN : sqrt((Img_VsCentre[p][0] - Img_VsCentre[q][0])^2 + (Img_VsCentre[p][1] - Img_VsCentre[q][1])^2)
-	// now deduce which column is closest per row use that to search for closest approach
-	Variable i
-	
-	for (i = 0; i < nVs; i += 1)
-		WaveStats/M=1/Q/RMD=[][i] mat_VsDist
-		Img_VsVsNNRef[i] = V_minRowLoc
-	endfor
+	WAVE/Z DimensionWave, matA
 	
 	String wName0
 	Variable loX,hiX,loY,hiY
-	Variable lowVar
+	Variable nRowsA,nRowsB
+	
+	Variable i
+	
 	// Make list of all XY coords (similar to original import)
 	for (i = 0; i < nVs; i += 1)
 		wName0 = StringFromList(i,VsList)
 		Wave Vs0 = $wName0
 		WaveStats/Q/M=1/RMD=[][0] Vs0
-		loX = V_min - 20
-		hiX = V_max + 20
+		loX = V_min - 40
+		hiX = V_max + 40
 		WaveStats/Q/M=1/RMD=[][1] Vs0
-		loY = V_min - 20
-		hiY = V_max + 20
-		Wave MatTarget = MakeTempMat(matA,0,i,loX,hiX,loY,hiY)
-		Make/O/N=(dimsize(Vs0,0),dimsize(MatTarget,0),2)/FREE cc // difference between each point, x in layer 0, y in layer 1
-		MatrixTranspose MatTarget
-		cc[][][0] = Vs0[p][0] - MatTarget[0][p]
-		cc[][][1] = Vs0[p][1] - MatTarget[1][p] // subtract each point in bb from each point in aa
-		MatrixOp/O/FREE dd = cc * cc
-		MatrixOp/O/FREE ee = sumbeams(dd)
-		MatrixOp/O/FREE ff = sqrt(ee) // 2D wave of all distances
-		WaveStats/Q/M=1 ff
-		lowVar = V_Min
-		// nearest distance
-		Img_VsVsNN[i] = lowVar
-		KillWaves MatTarget
+		loY = V_min - 40
+		hiY = V_max + 40
+		Wave MatVsTarget = MakeTempMat(matA,1,i,loX,hiX,loY,hiY)
+		// from http://www.igorexchange.com/node/8207
+		nRowsA = dimsize(Vs0,0)
+		nRowsB = dimsize(MatVsTarget,0)
+		if (nRowsB == 0)
+			Img_VsVsNN[i] = NaN
+			continue
+		endif
+		MatrixOp/O/FREE ax = col(Vs0,0)
+		MatrixOp/O/FREE ay = col(Vs0,1)
+		MatrixOp/O/FREE bx = col(MatVsTarget,0)
+		MatrixOp/O/FREE by = col(MatVsTarget,1)
+		MatrixOp/O/FREE matAx = colRepeat(ax,nRowsB)
+		MatrixOp/O/FREE matAy = colRepeat(ay,nRowsB)
+		MatrixOp/O/FREE matBx = rowRepeat(bx,nRowsA)
+		MatrixOp/O/FREE matBy = rowRepeat(by,nRowsA)
+		MatrixOp/O/FREE distanceX = matAx - matBx
+		MatrixOp/O/FREE distanceY = matAy - matBy
+		MatrixOp/O/FREE matDist = sqrt(distanceX * distanceX + distanceY * distanceY)
+		WaveStats/Q/M=1 matDist
+		// nearest distance in V_Min
+		Img_VsVsNN[i] = V_Min
+		KillWaves MatVsTarget
+		// now do the same for mitochondria
+		Wave MatMtTarget = MakeTempMat(matA,0,i,loX,hiX,loY,hiY)
+		nRowsB = dimsize(MatMtTarget,0)
+		if (nRowsB == 0)
+			Img_VsMtNN[i] = NaN
+			continue
+		endif
+		MatrixOp/O/FREE ax = col(Vs0,0)
+		MatrixOp/O/FREE ay = col(Vs0,1)
+		MatrixOp/O/FREE bx = col(MatMtTarget,0)
+		MatrixOp/O/FREE by = col(MatMtTarget,1)
+		MatrixOp/O/FREE matAx = colRepeat(ax,nRowsB)
+		MatrixOp/O/FREE matAy = colRepeat(ay,nRowsB)
+		MatrixOp/O/FREE matBx = rowRepeat(bx,nRowsA)
+		MatrixOp/O/FREE matBy = rowRepeat(by,nRowsA)
+		MatrixOp/O/FREE distanceX = matAx - matBx
+		MatrixOp/O/FREE distanceY = matAy - matBy
+		MatrixOp/O/FREE matDist = sqrt(distanceX * distanceX + distanceY * distanceY)
+		WaveStats/Q/M=1 matDist
+		// nearest distance in V_Min
+		Img_VsMtNN[i] = V_Min
+		KillWaves MatMtTarget
+	endfor
+End
+
+// Utility function to look at models colored according to distances
+Function HaveALook()
+	String vsList = RemoveFromList(WaveList("Vs_*_r",";",""),WaveList("Vs_*",";",""))
+	String mtList = WaveList("Mt_*",";","")
+	Variable nVs = ItemsInList(VsList)
+	Variable nMt = ItemsInList(MtList)
+	String wName0
+	KillWindow/Z lookVs
+	Display/N=lookVs
+	KillWindow/Z lookMt
+	Display/N=lookMt
+	
+	WAVE/Z img_VsVsNN, img_VsMtNN
+	
+	Variable i
+	
+	for (i = 0; i < nMt; i += 1)
+		wName0 = StringFromList(i,MtList)
+		AppendToGraph/W=lookVs $wName0[][1] vs $wName0[][0]
+		AppendToGraph/W=lookMt $wName0[][1] vs $wName0[][0]
 	endfor
 	
-	// Sort them according to X then Y with a third column for vesicle number fourth column for mito or vesicle
-	// extract the vesicle of interest
-	// extract from the list everythig within 20 nm of the vesicle of interest coordinate set
-	// do pairwise distance search between the 2 coord sets
-	// find minimum
-	// store it for that vesicle
+	ModifyGraph/W=lookVs rgb=(0,0,0)
+	ModifyGraph/W=lookMt rgb=(0,0,0)
+	Variable colorVar
 	
+	for (i = 0; i < nVs; i += 1)
+		wName0 = StringFromList(i,VsList)
+		AppendToGraph/W=lookVs $wName0[][1] vs $wName0[][0]
+		AppendToGraph/W=lookMt $wName0[][1] vs $wName0[][0]
+		colorVar = ((wavemax(img_VsVsNN) - img_VsVsNN[i]) / wavemax(img_VsVsNN)) * 65535
+		ModifyGraph/W=lookVs rgb($wName0)=(colorVar,0,colorVar) // vesicles are purple
+		colorVar = ((wavemax(img_VsMtNN) - img_VsMtNN[i]) / wavemax(img_VsMtNN)) * 65535
+		ModifyGraph/W=lookMt rgb($wName0)=(colorVar,0,colorVar) // vesicles are purple
+	endfor
 	
-	
-//	for (i = 0; i < nVs; i += 1)
-//		for (j = 0; j < nVs; j += 1)
-//			if( i == j)
-//				continue
-//			endif
-//			
-//			Duplicate/O/FREE Vs0, m0
-//			m0[][] -= Img_VsCentre[j][q]
-//			MatrixOP/O/FREE/NTHR=0 result = sqrt(sumrows(m0 * m0)
-//			lowestVar = min(WaveMin(result),lowestVar)
-//			if (lowestVar == WaveMin(result))
-//				Img_VsVsNNRef[i] = j
-//			endif
-//		endfor
-//	
-//	for (i = 0; i < nVs; i += 1)
-//		wName0 = StringFromList(i,VsList)
-//		Wave Vs0 = $wName0
-//		for (j = 0; j < nVs; j += 1)
-//			if( i == j)
-//				continue
-//			endif
-//			
-////			wName1 = StringFromList(j,VsList)
-////			Wave Vs1 = $wName1
-//			Duplicate/O/FREE Vs0, m0
-//			m0[][] -= Img_VsCentre[j][q]
-
-//			lowestVar = min(WaveMin(result),lowestVar)
-//			if (lowestVar == WaveMin(result))
-//				Img_VsVsNNRef[i] = j
-//			endif
-//		endfor
-//		distWave[i] = V_min
-//		rowPM[i] = V_minLoc
-//	endfor
+	string plotName
+	for (i = 0; i < 2; i += 1)
+		if(i == 0)
+			plotName = "lookVs"
+		else
+			plotName = "lookMt"
+		endif
+		SetAxis/W=$plotName bottom 0,2000
+		SetAxis/W=$plotName left 2000,0
+		ModifyGraph/W=$plotName width={Plan,1,bottom,left}
+		ModifyGraph/W=$plotName tick=3,mirror=1,noLabel=2,standoff=0
+		ModifyGraph/W=$plotName margin=6
+	endfor
+	AutoPositionWindow/E $WinName(0,1)
 End
 
 ///	@param	m0	matrix that contains coords and object and contour id
@@ -554,7 +586,7 @@ STATIC Function/WAVE MakeTempMat(m0,objectV,contourV,loX,hiX,loY,hiY)
 	Variable objectV,contourV,loX,hiX,loY,hiY
 	Duplicate/O/FREE m0, m1
 	// exclude the vesicle contour we're working with
-	m1[][2,3] = (m1[p][0] == 0 && m1[p][1] == contourV) ? NaN : m1[p][q]
+	m1[][2,3] = (m1[p][0] == 1 && m1[p][1] == contourV) ? NaN : m1[p][q]
 	// exclude everything but the object we're looking for
 	m1[][2,3] = (m1[p][0] == objectV) ? m1[p][q] : NaN
 	// exclude everything outside the limits
@@ -584,6 +616,7 @@ Function CollectAllMeasurements()
 	
 	// we need to concatenate these waves into root (all_*)
 	String targetWaveList = "Img_VsArea;Img_VsAspectRatio;Img_VsCentre;Img_VsCircularity;Img_VsMajAxis;Img_VsMinAxis;Img_VsPerimeter;"
+	targetWaveList += "Img_VsVsNN;Img_VsMtNN;"
 	targetWaveList += "Img_MtPeriTotal;Img_MtPeriNude;Img_MtPeriDec;"
 	Variable nTargets = ItemsInList(targetWaveList)
 	String targetName, tList, conName
