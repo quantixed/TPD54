@@ -177,7 +177,7 @@ Function FindVesicleCentresAndPlotOut()
 	Variable nWaves = ItemsInList(wList)
 	Variable nCol = 3 // x y and z
 	Make/O/N=(nWaves,nCol) Img_VsCentre
-	Make/O/N=(nWaves) Img_VsMinAxis,Img_VsMajAxis,Img_VsPerimeter,Img_VsArea
+	Make/O/N=(nWaves) Img_VsMinAxis,Img_VsMajAxis,Img_VsPerimeter,Img_VsArea,Img_VsMean2R
 	String currentDF = GetDataFolder(0)
 	String wName,tName
 	
@@ -206,6 +206,10 @@ Function FindVesicleCentresAndPlotOut()
 		MatrixOp/O/FREE w1c0 = col(w1,0)
 		MatrixOp/O/FREE w1c1 = col(w1,1)
 		Img_VsArea[i] = PolygonArea(w1c0,w1c1)
+		// use polar coords to get mean radius, convert to diam
+		Make/O/N=(dimsize(w1,0)-1)/FREE rW
+		rW[] = sqrt(w1[p][0]^2 + w1[p][1]^2)
+		Img_VsMean2R[i] = 2 * mean(rW)
 	endfor
 	if(numpnts(Img_VsArea) > 1)
 		MatrixOp/O/NTHR=0 Img_VsAspectRatio = Img_VsMinAxis / Img_VsMajAxis
@@ -229,14 +233,14 @@ Function VesicleAxisLength(m1,colNo)
 	Variable V_Value,len
 	if(colNo == 1)
 		FindLevel/Q/EDGE=1/P m1c0, 0
-		len = abs(m1c1(V_Value))
+		len = abs(m1c1(V_LevelX))
 		FindLevel/Q/EDGE=2/P m1c0, 0
-		len += abs(m1c1(V_Value))
+		len += abs(m1c1(V_LevelX))
 	else
 		FindLevel/Q/EDGE=1/P m1c1, 0
-		len = abs(m1c0(V_Value))
+		len = abs(m1c0(V_LevelX))
 		FindLevel/Q/EDGE=2/P m1c1, 0
-		len += abs(m1c0(V_Value))
+		len += abs(m1c0(V_LevelX))
 	endif
 	return len
 End
@@ -314,7 +318,7 @@ Function LookAtModels()
 			// make a nice tracename - not really necessary
 			tName = CleanupName(currentDF,0) + "_" + wName
 			AppendToGraph/W=$plotName w0[][1]/TN=$tName vs w0[][0]
-			ModifyGraph/W=$plotName rgb($tName)=(65535,0,65535) // vesicles are purple
+			ModifyGraph/W=$plotName rgb($tName)=(65535,0,65535) // vesicles are magenta
 		endif
 	endfor
 	wList = WaveList("Mt_*",";","")
@@ -329,7 +333,7 @@ Function LookAtModels()
 	endfor
 	// Images are 1376 x 1032
 	SetAxis/W=$plotName bottom 0,2000
-	SetAxis/W=$plotName left 2000,0
+	SetAxis/W=$plotName left 0,2000 //coords from IMOD are graph based
 	// scaling will be variable
 	ModifyGraph/W=$plotName width={Plan,1,bottom,left}
 	ModifyGraph/W=$plotName tick=3,mirror=1,noLabel=2,standoff=0
@@ -566,7 +570,7 @@ Function HaveALook()
 			plotName = "lookMt"
 		endif
 		SetAxis/W=$plotName bottom 0,2000
-		SetAxis/W=$plotName left 2000,0
+		SetAxis/W=$plotName left 0,2000 //coords from IMOD are graph based
 		ModifyGraph/W=$plotName width={Plan,1,bottom,left}
 		ModifyGraph/W=$plotName tick=3,mirror=1,noLabel=2,standoff=0
 		ModifyGraph/W=$plotName margin=6
