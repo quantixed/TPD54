@@ -1,13 +1,51 @@
 #pragma TextEncoding = "MacRoman"		// For details execute DisplayHelpTopic "The TextEncoding Pragma"
 #pragma rtGlobals=3		// Use modern global access method and strict wave access.
-// OME metadata is read in to a single textwave (Textwave0)
-// This function will parse out the image names and numbers,
+// These functions will read and parse an OME XML dump from a text file to get timestamps
+// Pick Load and parse from Macros menu
+// or
+// You can do this manually or by using Macros>Load OME XML file
+// Then you can pick Parse time stamps from the Macros menu to read time stamps.
+// Briefly:
+// OME metadata is read in to a single textwave (OMEDumpWave0)
+// Then a second function will parse out the image names and numbers,
 // creating timestamp waves for each file in an mvd2 library
-// Save OME-XML output to a file. Load delimited text, pick name Textwave0
 // Known issue: if the OME-XML file has incomplete timestamps the function makes strange waves
+
+Menu "Macros"
+	"Load OME XML file",  LoadTextFileOfOMEXMLdata()
+	"Parse time stamps", ParseText()
+	"Load and parse", LoadAndParse()
+End
+
+Function LoadAndParse()
+	LoadTextFileOfOMEXMLdata()
+	ParseText()
+End
+
+Function LoadTextFileOfOMEXMLdata()
+	String pathName	=""	// Name of Igor symbolic path or "" to get dialog
+	String fileName	=""	// Name of file to load or "" to get dialog
+	
+	if ((strlen(pathName)==0) || (strlen(fileName)==0))
+		// Display dialog looking for file
+		Variable refNum
+		String filters = "Text Files (*.txt):.txt;"
+		filters += "All Files:.*;"
+		Open/D/R/P=$pathName/F=filters/M="Select text file" refNum
+		fileName = S_fileName			// S_fileName is set by Open/D
+		if (strlen(fileName) == 0)		// User cancelled?
+			return -2
+		endif
+		LoadWave/O/Q/P=$pathName/J/N=OMEDumpWave/K=2 fileName
+	endif
+End
+
 Function ParseText()
-	Wave/T w0 = Textwave0
-	Variable nRows = numpnts(w0)
+	WAVE/Z/T OMEDumpWave0
+	if(!WaveExists(OMEDumpWave0))
+		Abort "Please load OME data first."
+	endif
+	Variable nRows = numpnts(OMEDumpWave0)
 	String tval, expr, imageNum, imageName
 	Make/O/N=100 imageNumWave,imageRegWave
 	Make/O/T/N=100 imageNameWave
@@ -17,7 +55,7 @@ Function ParseText()
 	Variable i, j = 0
 	
 	for(i = 0; i < nRows; i += 1)
-		tval = w0[i]
+		tval = OMEDumpWave0[i]
 		if(strsearch(tval, "<Image ID=",0) == 0)
 			// evaluate string
 			expr = "<Image ID=\"Image:([[:digit:]]+)\"."
@@ -33,13 +71,13 @@ Function ParseText()
 	endfor
 	WaveStats/Q imageNumWave
 	DeletePoints V_maxLoc+1, (100-(V_maxLoc+1)), imageNumWave,imageNameWave,imageRegWave
-	Edit /N=imageTable imageNumWave,imageNameWave,imageRegWave
+//	Edit /N=imageTable imageNumWave,imageNameWave,imageRegWave
 
 	String deltaT, theC, theT, theZ
 	j = 0
 	Make/O/N=(nRows,5) mDataWave = NaN
 	For(i=0; i<nRows; i+=1)
-		tval = w0[i]
+		tval = OMEDumpWave0[i]
 		if(strsearch(tval, "<Plane DeltaT=",0) == 0)
 			// evaluate string
 			expr = "<Plane DeltaT=\"([[:digit:]\.[:digit:]]+)\"."
@@ -60,7 +98,7 @@ Function ParseText()
 	EndFor
 	WaveStats/Q mDataWave	// max value should be i and should exceed deltaT
 	DeletePoints/M=0 V_maxRowLoc+1, (DimSize(mDataWave,0)-V_maxRowLoc), mDataWave
-	Edit/N=matrixTable mDataWave
+//	Edit/N=matrixTable mDataWave
 
 	// split up 2D wave
 	MatrixOp/O c4=col(mDataWave,4)
@@ -81,9 +119,13 @@ Function ParseText()
 	String wName
 	MatrixOp/O c0 = col(mDataWave,0)
 	nRows = dimsize(diceWave,0)
-	// how many channels?
+	// how many channels? No longer used
 	MatrixOp/O c1 = col(mDataWave,1)
 	Variable cVar = wavemax(c1)
+	// more than one channel gives same time for each channel 
+	Variable multipleVar
+	KillWindow/Z timeWaves
+	Edit/N=timeWaves
 	
 	for(i = 0; i < nRows; i += 1)
 		if((diceWave[i][1]-diceWave[i][0])>1)
@@ -91,12 +133,24 @@ Function ParseText()
 			Duplicate/O/R=[diceWave[i][0],diceWave[i][1]] c0, $wName
 			Wave w1 = $wName
 			// now get rid of multiples
-			if((sum(w1,0,cVar)/3)==w1[0])
+			multipleVar = WaveChecker(w1)
+			if(multipleVar > 0)
 				Resample/DOWN=(cVar+1)/N=1 w1
-			else
-				Print "Didn't downsample ", wName // report this case
+				SetScale/P x 0,1,"", w1
 			endif
+			AppendToTable/W=timeWaves w1
 		endif
 	endfor
-	KillWaves c4,c1,c0
+	KillWaves c4,c1,c0,diceWave
+End
+
+STATIC Function WaveChecker(w1)
+	Wave w1
+	if((sum(w1,pnt2x(w1,0),pnt2x(w1,2))/3) == 0)
+		return 3
+	elseif((sum(w1,pnt2x(w1,0),pnt2x(w1,1))/2) == 0)
+		return 2
+	else
+		return 0
+	endif
 End
