@@ -4,7 +4,7 @@
 
 Function CoKSAveraging()
 	CleanSlate()
-	XLLoadWave/S="Sheet1"/R=(A1,PN311)/C=3/W=1/D/K=1 "Macintosh HD:Users:gabrielle:Dropbox:Gabrielle & Steve:Quantification.xlsx"
+	XLLoadWave/S="Sheet1"/R=(A1,PN311)/C=3/W=1/D/K=1 ""
 	String wList = WaveList("*",";","")
 	String wName
 	String expr="([[:alnum:]]+)\\w([[:alpha:]]+)\\w([[:alpha:]]+)\\w([[:digit:]]+)\\w([[:digit:]]+)"
@@ -26,7 +26,7 @@ Function CoKSAveraging()
 	endfor
 
 	// load timestamps
-	XLLoadWave/S="Sheet2"/R=(A1,O311)/C=3/W=1/D/K=1 "Macintosh HD:Users:gabrielle:Dropbox:Gabrielle & Steve:Quantification.xlsx"
+	XLLoadWave/S="Sheet2"/R=(A1,O311)/C=3/W=1/D/K=1 ""
 	
 	FindDuplicates/RT=uCondCellName condCellname
 	FindDuplicates/RT=uCondName condName
@@ -49,10 +49,14 @@ Function CoKSAveraging()
 		tName = "t_" + uCondCellName[i]
 		for(j = 0; j < 4; j += 1)
 			srch = ReplaceString("_",uCondCellName[i],StringFromList(j,term))
+			if(StringMatch(srch,"Rab0_G_mito*") == 1 || StringMatch(srch,"Rab0_G_cyto*") == 1)
+				continue
+			endif
 			wList = WaveList(srch + "_*", ";","")
-			Concatenate/O/NP=1/KILL/FREE wList, tempMat
+			Concatenate/O/NP=1/KILL wList, tempMat
 			MatrixTranspose TempMat
 			MatrixOp/O $srch = averageCols(tempMat)
+			KillWaves tempMat
 			Wave w0 = $srch
 			MatrixTranspose w0
 			Redimension/N=-1 w0
@@ -61,6 +65,10 @@ Function CoKSAveraging()
 			AppendToGraph/W=$plotName w0 vs $tName
 			ModifyGraph/W=$plotName rgb($srch)=(colorW[j][0],colorW[j][1],colorW[j][2],colorW[j][3])
 		endfor
+		// This is a hack
+		// Fake Rab0_G waves
+		FakeRab0GWaves()
+
 		TextBox/C/N=text0/F=0/A=LT/X=0.00/Y=0.00 uCondCellName[i]
 		ModifyGraph/W=$plotName lsize=2
 		Label/W=$plotName left "Fluorescence (F/F\\B0\\M)"
@@ -158,5 +166,29 @@ Function CleanSlate()
 	for(i = 0; i < allItems; i += 1)
 		name = GetIndexedObjNameDFR(dfr, 4, i)
 		KillDataFolder $name		
+	endfor
+End
+
+Function FakeRab0GWaves()
+	String wList = WaveList("t_Rab0*",";","")
+	Variable nWaves = ItemsInList(wList)
+	if(nWaves ==0)
+		return -1
+	endif
+	String wName, newName
+	
+	Variable i
+	
+	for(i = 0; i < nWaves; i += 1)
+		wName = StringFromList(i,wList)
+		newName = ReplaceString("t_",wName,"")
+		newName = ReplaceString("_",newName,"_G_mito_")
+		Duplicate/O $wName, $newName
+		Wave w1 = $newName
+		w1 = 1
+		newName = ReplaceString("_G_mito_",newName,"_G_cyto_")
+		Duplicate/O $wName, $newName
+		Wave w2 = $newName
+		w2 = 1
 	endfor
 End
