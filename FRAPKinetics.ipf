@@ -1,6 +1,6 @@
 #pragma TextEncoding = "UTF-8"
 #pragma rtGlobals=3		// Use modern global access method and strict wave access.
-
+#include <Waves Average>
 // Current method is to do
 // 1. NormaliseTheseWaves(searchStr,row0,row1)
 // 3. PlotOutNormalisedWavesWithTime()
@@ -75,16 +75,30 @@ Function PlotOutNormalisedWavesWithTime()
 			Wave/z w2 = $sName
 			AppendToGraph/W=p_allSWaves w2 vs w1
 		endif
-//		// colour the 54 waves differently, this condition can be deleted
-//		if(stringmatch(wName,"*54*") == 0)
-//			ModifyGraph/W=p_allNWaves rgb($wName)=(0,0,65535)
-//			ModifyGraph/W=p_allSWaves rgb($sName)=(0,0,65535)
-//		endif
 	endfor
 	Label/W=p_allNWaves left "Fluorescence (Normalized)"
 	Label/W=p_allNWaves bottom "Time (s)"
 	Label/W=p_allSWaves left "Fluorescence (Scaled)"
 	Label/W=p_allSWaves bottom "Time (s)"
+	// Make average waves for scaled
+//	String yList, xList, negList, avName, errName
+//	yList = Wavelist("GFP_*",";","WIN:p_allSWaves")
+//	negList = WaveList("GFP_54*",";","")
+//	yList = RemoveFromList(negList,yList)
+//	xList = ReplaceString("GFP_",yList,"t_GFP_")
+//	avName = "W_Ave_GFP"
+//	errName = ReplaceString("Ave", avName, "Err")
+//	fWaveAverage(yList, xList, 3, 1, AvName, ErrName)
+//	yList = Wavelist("GFP_54*",";","WIN:p_allSWaves")
+//	xList = ReplaceString("GFP_",yList,"t_GFP_")
+//	avName = "W_Ave_GFP_54"
+//	errName = ReplaceString("Ave", avName, "Err")
+//	fWaveAverage(yList, xList, 3, 1, AvName, ErrName)
+//	yList = Wavelist("endoGFP_*",";","WIN:p_allSWaves")
+//	xList = ReplaceString("endoGFP_",yList,"t_endoGFP_")
+//	avName = "W_Ave_endoGFP"
+//	errName = ReplaceString("Ave", avName, "Err")
+//	fWaveAverage(yList, xList, 3, 1, AvName, ErrName)
 End
 
 Function FitTheWavesUsingTime()
@@ -94,7 +108,7 @@ Function FitTheWavesUsingTime()
 	Make/O/N=(nWaves)/T fitMat_name
 	Make/O/N=(nWaves,3)/D fitMat_single
 	Make/O/N=(nWaves,5)/D fitMat_double
-	Make/O/N=(nWaves,2)/D chiSqMat
+	Make/O/N=(nWaves,2)/D fitMat_chisq
 	
 	Variable i
 	
@@ -111,8 +125,13 @@ Function FitTheWavesUsingTime()
 			TheFitter(w0,w1,i)
 		endif
 	endfor
+	ClassifyWaves(fitMat_Name,"GFP_*;GFP_54*;endoGFP_*;")
+	LookAtChiSq()
+	RecolorTraces("p_allNWaves",0)
+	RecolorTraces("p_allSWaves",0)
+	RecolorTraces("fit_*",1)
 //	SummariseTheFits("GL2","KD")
-//	MakeTheLayouts("fit_",6,4)
+	MakeTheLayouts("fit_",6,4)
 End
 
 Function TheFitter(yW,xW,ii)
@@ -120,7 +139,7 @@ Function TheFitter(yW,xW,ii)
 	Variable ii // row number to store W-coefs
 	
 	WAVE/Z fitMat_single,fitMat_double
-	WAVE/Z chisqMat
+	WAVE/Z fitMat_chisq
 	
 	String yName = NameOfWave(yW)
 	String plotName = "fit_" + yName
@@ -130,41 +149,113 @@ Function TheFitter(yW,xW,ii)
 	endif
 	KillWindow/Z $plotName
 	Display/N=$plotName/HIDE=1 yW vs xW
-	// I have edited to here need to make the two fits and store everything
-	String aName = yName + "_a"
-	String bName = yName + "_b"
-	Make/O/N=(numpnts(yW))/D $aName=NaN,$bName=NaN
-	CurveFit/Q hillequation, yW[0,aRightSide] /X=xW /D=$aName
+	String sglName = yName + "_sgl"
+	String dblName = yName + "_dbl"
+	Make/O/N=(numpnts(yW))/D $sglName=NaN,$dblName=NaN
+	// single fit to data
+	CurveFit/Q exp_XOffset, yW[V_minRowLoc,V_npnts-1] /X=xW /D=$sglName
+	// store coef
 	WAVE/Z W_coef
-	fitMat_a[ii][] = W_coef[q]
-	AppendToGraph/W=$plotName $aName vs xW
-	ModifyGraph/W=$plotName rgb($aName)=(0,0,0)
-	// store residuals
-	Wave aW = $aName
-	ResiStore(yW,aW,resiMat_a,ii)
-	if((numpnts(yW) - V_maxRowLoc) > 4)
-		CurveFit/Q line, yW[V_maxRowLoc,numpnts(yW)-1] /X=xW /D=$bName
-		WAVE/Z W_coef
-		fitMat_b[ii][] = W_coef[q]
-		AppendToGraph/W=$plotName $bName vs xW
-		ModifyGraph/W=$plotName rgb($bName)=(0,0,0)
-		Wave bW = $bName
-		ResiStore(yW,bW,resiMat_b,ii)
-	endif
+	fitMat_single[ii][] = W_coef[q]
+	// store chsq
+	fitMat_chisq[ii][0] = V_chisq
+	AppendToGraph/W=$plotName $sglName vs xW
+	ModifyGraph/W=$plotName rgb($sglName)=(32768,0,0)
+	
+	// double fit to data
+	CurveFit/Q dblexp_XOffset, yW[V_minRowLoc,V_npnts-1] /X=xW /D=$dblName
+	// store coef
+	WAVE/Z W_coef
+	fitMat_double[ii][] = W_coef[q]
+	// store chsq
+	fitMat_chisq[ii][1] = V_chisq
+	AppendToGraph/W=$plotName $dblName vs xW
+	ModifyGraph/W=$plotName rgb($dblName)=(0,0,0)
 End
 
-Function ResiStore(yW,fitW,storeW,ii)
-	Wave yW,fitW,storeW
-	Variable ii
-	Duplicate/O/FREE yW,yWcopy
-	Duplicate/O/FREE fitW,fitWcopy
-	yWcopy[] = (numtype(fitW[p]) == 2) ? NaN : yW[p]
-	WaveTransform zapnans yWcopy
-	WaveTransform zapnans fitWcopy
-	MatrixOp/O/FREE sseW = (yWcopy - fitWcopy) * (yWcopy - fitWcopy)
-	storeW[ii][0] = sum(sseW)
-	storeW[ii][1] = numpnts(yWcopy)
-	storeW[ii][2] = storeW[ii][0] / storeW[ii][1]
+Function ClassifyWaves(NameWave,condList)
+	Wave/T NameWave
+	String condList
+	Variable nRows = numpnts(NameWave)
+	Make/O/N=(nRows) fitMat_class=NaN
+	String theString
+	Variable i,j
+	for(i = 0; i < ItemsInList(condList); i += 1)
+		theString = StringFromList(i,condList)
+		for(j = 0; j < nRows; j += 1)
+			if(stringmatch(NameWave[j],theString) == 1)
+				fitMat_class[j] = i
+			endif
+		endfor
+	endfor
+	Make/O/N=(3,3) colorW = {{32768,32768,0},{32768,32768,0},{32768,65355,65355}}
+End
+
+Function LookAtChiSq()
+	WAVE fitMat_chiSq,fitMat_class,colorW
+	KillWindow/Z chiSqPlot
+	Display/N=chiSqPlot fitMat_chiSq[][1] vs fitMat_chiSq[][0]
+	ModifyGraph/W=chiSqPlot mode=3
+	ModifyGraph/W=chiSqPlot zColor(fitMat_chiSq)={fitMat_class,*,*,cindexRGB,0,colorW}
+	ModifyGraph/W=chiSqPlot width={Aspect,1}
+	ModifyGraph/W=chiSqPlot mirror=1;DelayUpdate
+	SetAxis/W=chiSqPlot left 0,0.2;DelayUpdate
+	SetAxis/W=chiSqPlot bottom 0,0.2
+	Label/W=chiSqPlot bottom "Single Exponential (\\$WMTEX$ \\chi^2 \\$/WMTEX$)"
+	Label/W=chiSqPlot left "Double Exponential (\\$WMTEX$ \\chi^2 \\$/WMTEX$)"
+	SetDrawEnv/W=chiSqPlot dash= 3
+	DrawLine/W=chiSqPlot 0,1,1,0
+End
+
+Function RecolorTraces(graphStr,optVar)
+	String GraphStr
+	Variable optVar // 0 for single graph, 1 for many graphs
+	WAVE/Z/T fitMat_Name
+	WAVE/Z fitMat_Class,colorW
+	String traceName, tList, windowList, windowName, plotname
+	Variable nTraces, nWindows
+	Variable i,j
+	
+	if(optVar == 0)
+		tList = TraceNameList(graphStr,";",1)
+		nTraces = ItemsInList(tList)
+		for(i = 0; i < nTraces; i += 1)
+			traceName = StringFromList(i, tList)
+			// this is hardcoded rather than doing lookup
+			if(stringmatch(traceName,"*_sgl") == 1 || stringmatch(traceName,"*_dbl") == 1)
+				continue
+			endif
+			if(stringmatch(traceName,"GFP_*") == 1 && stringmatch(traceName,"GFP_54*") == 0)
+				ModifyGraph/W=$graphStr rgb($traceName)=(colorW[0][0],colorW[0][1],colorW[0][2])
+			elseif(stringmatch(traceName,"GFP_54*") == 1)
+				ModifyGraph/W=$graphStr rgb($traceName)=(colorW[1][0],colorW[1][1],colorW[1][2])
+			elseif(stringmatch(traceName,"endoGFP_*") == 1)
+				ModifyGraph/W=$graphStr rgb($traceName)=(colorW[2][0],colorW[2][1],colorW[2][2])
+			endif
+		endfor
+	elseif(optVar == 1)
+		windowList = WinList(graphStr,";","WIN:1")
+		nWindows = ItemsInList(windowList)
+		for(i = 0; i < nWindows; i += 1)
+			plotName = StringFromList(i, windowList)
+			tList = TraceNameList(plotName,";",1)
+			nTraces = ItemsInList(tList)
+			for(j = 0; j < nTraces; j += 1)
+				traceName = StringFromList(j, tList)
+				// again hard-coded but could be done with lookup
+				if(stringmatch(traceName,"*_sgl") == 1 || stringmatch(traceName,"*_dbl") == 1)
+					continue
+				endif
+				if(stringmatch(traceName,"GFP_*") == 1 && stringmatch(traceName,"GFP_54*") == 0)
+					ModifyGraph/W=$plotName rgb($traceName)=(colorW[0][0],colorW[0][1],colorW[0][2])
+				elseif(stringmatch(traceName,"GFP_54*") == 1)
+					ModifyGraph/W=$plotName rgb($traceName)=(colorW[1][0],colorW[1][1],colorW[1][2])
+				elseif(stringmatch(traceName,"endoGFP_*") == 1)
+					ModifyGraph/W=$plotName rgb($traceName)=(colorW[2][0],colorW[2][1],colorW[2][2])
+				endif
+			endfor
+		endfor
+	endif
 End
 
 Function SummariseTheFits(cond0,cond1)
