@@ -7,6 +7,13 @@
  * The csv output is saved to the directory the user choses with the name of the file.
  * Written by Stephen Royle 2018-11-17
  */
+function lowestVal(colStr)	{
+	theLowest = 10000	// set to something big
+	for (row = 0; row < nResults; row++) { 
+        theLowest = minOf(theLowest,getResult(colStr,row));
+	}
+	return theLowest
+}
 pxSize = 0.068964788;
 // get the name of the original window
 win = getTitle();
@@ -24,8 +31,9 @@ setThreshold(0, 1);
 setOption("BlackBackground", false);
 run("Convert to Mask");
 run("Analyze Particles...", "display clear summarize add");
-bx=2 * round(getResult("BX",0) / pxSize);
-by=2 * round(getResult("BY",0) / pxSize);
+// because the 0th row does not necessarily contain the top left ROI
+bx=2 * round(lowestVal("BX") / pxSize);
+by=2 * round(lowestVal("BY") / pxSize);
 ww=2 * round(getResult("Width",0) / pxSize);
 hh=2 * round(getResult("Height",0) / pxSize);
 //print(bx,by,ww,hh);
