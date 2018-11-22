@@ -9,7 +9,7 @@ Menu "Macros"
 End
 
 Function WorkflowForFRAP()
-	CSVLoader()
+	SpecifyConditions()
 	NormaliseTheseWaves("frapW*",2,5)
 	LoadTimeWaves()	
 	RenameAllTheWaves()
@@ -17,13 +17,38 @@ Function WorkflowForFRAP()
 	FitTheWavesUsingTime()
 	MakeTheAverageWavesAndFit()
 	SummaryOfFits()
-//	Layout/T AvsTau,chiSqPlot,theAveFits,RcvryVsOTau,p_allSWaves,IntensityVsOTau,PropVsTau
+	MakeTheFigure()
+End
+
+Function SpecifyConditions()
+	CleanSlate()
+	String cond0 = "HeLa_GFP_*"
+	String cond1 = "HeLa_GFPTPD54_*"
+	String cond2 = "HeLa_endoGFPTPD54_*"
+	String short0 = "GFP"
+	String short1 = "GFPTPD54"
+	String short2 = "endoGFPTPD54"
+	String hstr = "Specify the names of the FRAP images."
+		
+	Prompt cond0, "Condition 1"
+	Prompt cond1, "Condition 2"
+	Prompt cond2, "Condition 3"
+	Prompt short0, "Short name 1"
+	Prompt short1, "Short name 2"
+	Prompt short2, "Short name 3"
+	DoPrompt/HELP=hstr "Specify", cond0, cond1, cond2, short0, short1, short2
+	
+	if (V_flag) 
+		return -1
+	endif
+	Make/O/N=(3)/T condWave={cond0,cond1,cond2}
+	Make/O/N=(3)/T shortWave={short0,short1,short2}
+	CSVLoader()
 End
 
 // This function loads CSVs saved from ImageJ of line profiles
 // Makes two two-column waves for each image (2 CSVs for red and green)
 Function CSVLoader()
-	CleanSlate()
 	NewDataFolder/O/S root:data
 	
 	String expDiskFolderName
@@ -154,52 +179,64 @@ Function PlotOutNormalisedWavesWithTime()
 End
 
 STATIC Function MakeTheAverageWavesAndFit()
-	String yList, xList, avName, errName
-	yList = Wavelist("HeLa_GFP_*",";","WIN:p_allSWaves")
+	WAVE/Z/T condWave, shortWave
+	if(!WaveExists(condWave) || !WaveExists(shortWave))
+		return -1
+	endif
+	String yList, xList, avName, errName,srchStr
+	srchstr = condWave[0]
+	yList = Wavelist(srchStr,";","WIN:p_allSWaves")
 	xList = ReplaceString("_s",yList,"")	// note that this will fail with strings containing this substring
-	xList = ReplaceString("HeLa_",xList,"t_HeLa_")
-	avName = "W_Ave_GFP"
+	xList = ReplaceString(RemoveEnding(srchStr),xList,"t_" + RemoveEnding(srchStr))
+	avName = "W_Ave_" + shortWave[0]
 	errName = ReplaceString("Ave", avName, "Err")
 	fWaveAverage(yList, xList, 1, 1, AvName, ErrName)
-	yList = Wavelist("HeLa_GFPTPD54_*",";","WIN:p_allSWaves")
+	srchstr = condWave[1]
+	yList = Wavelist(srchStr,";","WIN:p_allSWaves")
 	xList = ReplaceString("_s",yList,"")	
-	xList = ReplaceString("HeLa_",xList,"t_HeLa_")
-	avName = "W_Ave_GFPTPD54"
+	xList = ReplaceString(RemoveEnding(srchStr),xList,"t_" + RemoveEnding(srchStr))
+	avName = "W_Ave_" + shortWave[1]
 	errName = ReplaceString("Ave", avName, "Err")
 	fWaveAverage(yList, xList, 1, 1, AvName, ErrName)
-	yList = Wavelist("HeLa_endoGFPTPD54_*",";","WIN:p_allSWaves")
+	srchstr = condWave[2]
+	yList = Wavelist(srchStr,";","WIN:p_allSWaves")
 	xList = ReplaceString("_s",yList,"")	
-	xList = ReplaceString("HeLa_",xList,"t_HeLa_")
-	avName = "W_Ave_endoGFPTPD54"
+	xList = ReplaceString(RemoveEnding(srchStr),xList,"t_" + RemoveEnding(srchStr))
+	avName = "W_Ave_" + shortWave[2]
 	errName = ReplaceString("Ave", avName, "Err")
 	fWaveAverage(yList, xList, 1, 1, AvName, ErrName)
 	// make the plots
-	WAVE/Z W_Ave_GFP,W_Ave_GFPTPD54,W_Ave_endoGFPTPD54
-	WAVE/Z W_Err_GFP,W_Err_GFPTPD54,W_Err_endoGFPTPD54
+	Wave a0 = $("W_Ave_" + shortWave[0])
+	Wave a1 = $("W_Ave_" + shortWave[1])
+	Wave a2 = $("W_Ave_" + shortWave[2])
+	Wave e0 = $("W_Err_" + shortWave[0])
+	Wave e1 = $("W_Err_" + shortWave[1])
+	Wave e2 = $("W_Err_" + shortWave[2])
 	WAVE/Z colorW
 	String plotName = "theAveFits"
-	Display/N=$plotName W_Ave_GFP,W_Ave_GFPTPD54,W_Ave_endoGFPTPD54
+	Display/N=$plotName a0,a1,a2
 	ModifyGraph/W=$plotName lsize=2
-	ModifyGraph/W=$plotName rgb(W_Ave_GFP)=(colorW[0][0],colorW[0][1],colorW[0][2])
-	ModifyGraph/W=$plotName rgb(W_Ave_GFPTPD54)=(colorW[1][0],colorW[1][1],colorW[1][2])
-	ModifyGraph/W=$plotName rgb(W_Ave_endoGFPTPD54)=(colorW[2][0],colorW[2][1],colorW[2][2])
-	ErrorBars/W=$plotName W_Ave_GFP SHADE= {0,0,(0,0,0,0),(0,0,0,0)},wave=(W_Err_GFP,W_Err_GFP)
-	ErrorBars/W=$plotName W_Ave_GFPTPD54 SHADE= {0,0,(0,0,0,0),(0,0,0,0)},wave=(W_Err_GFPTPD54,W_Err_GFPTPD54)
-	ErrorBars/W=$plotName W_Ave_endoGFPTPD54 SHADE= {0,0,(0,0,0,0),(0,0,0,0)},wave=(W_Err_endoGFPTPD54,W_Err_endoGFPTPD54)
+	ModifyGraph/W=$plotName rgb($NameOfWave(a0))=(colorW[0][0],colorW[0][1],colorW[0][2])
+	ModifyGraph/W=$plotName rgb($NameOfWave(a1))=(colorW[1][0],colorW[1][1],colorW[1][2])
+	ModifyGraph/W=$plotName rgb($NameOfWave(a2))=(colorW[2][0],colorW[2][1],colorW[2][2])
+	ErrorBars/W=$plotName $NameOfWave(a0) SHADE= {0,0,(0,0,0,0),(0,0,0,0)},wave=(e0,e0)
+	ErrorBars/W=$plotName $NameOfWave(a1) SHADE= {0,0,(0,0,0,0),(0,0,0,0)},wave=(e1,e1)
+	ErrorBars/W=$plotName $NameOfWave(a2) SHADE= {0,0,(0,0,0,0),(0,0,0,0)},wave=(e2,e2)
 	Label/W=$plotName bottom "Time (s)"
 	Label/W=$plotName left "Fluorescence (scaled)"
+	Legend/W=$plotName/C/N=text0/J/F=0/B=1/A=LT/X=0/Y=0 ""
 	Variable lVar,rVar
-	lVar = x2pnt(W_Ave_GFP,0)
-	rVar = numpnts(W_Ave_GFP) - 2
-	CurveFit dblexp_XOffset W_Ave_GFP[lVar,rVar] /W=W_Err_GFP /I=1 /D 
-	lVar = x2pnt(W_Ave_GFPTPD54,0)
-	rVar = numpnts(W_Ave_GFPTPD54) - 2
-	CurveFit dblexp_XOffset W_Ave_GFPTPD54[lVar,rVar] /W=W_Err_GFPTPD54 /I=1 /D 
-	lVar = x2pnt(W_Ave_endoGFPTPD54,0)
-	rVar = numpnts(W_Ave_endoGFPTPD54) - 2
-	CurveFit dblexp_XOffset W_Ave_endoGFPTPD54[lVar,rVar] /W=W_Err_endoGFPTPD54 /I=1 /D
+	lVar = x2pnt(a0,0)
+	rVar = numpnts(a0) - 2
+	CurveFit dblexp_XOffset a0[lVar,rVar] /W=e0 /I=1 /D 
+	lVar = x2pnt(a1,0)
+	rVar = numpnts(a1) - 2
+	CurveFit dblexp_XOffset a1[lVar,rVar] /W=e1 /I=1 /D 
+	lVar = x2pnt(a2,0)
+	rVar = numpnts(a2) - 2
+	CurveFit dblexp_XOffset a2[lVar,rVar] /W=e2 /I=1 /D
 	ModifyGraph/W=$plotName lstyle=3
-	ModifyGraph/W=$plotName lstyle(W_Ave_GFP)=0,lstyle(W_Ave_GFPTPD54)=0,lstyle(W_Ave_endoGFPTPD54)=0
+	ModifyGraph/W=$plotName lstyle($NameOfWave(a0))=0,lstyle($NameOfWave(a1))=0,lstyle($NameOfWave(a2))=0
 	SetAxis/W=$plotName bottom -4,35
 	SetAxis/W=$plotName left 0,1.2
 End
@@ -301,7 +338,9 @@ Function FitTheWavesUsingTime()
 			TheFitter(w0,w1,i)
 		endif
 	endfor
-	ClassifyWaves(fitMat_Name,"HeLa_GFP_*;HeLa_GFPTPD54*;HeLa_endoGFP*;")
+	WAVE/Z/T condWave
+	String paramStr = TWave2StringList(condWave)
+	ClassifyWaves(fitMat_Name,paramStr)
 	LookAtChiSq()
 	RecolorTraces("p_allNWaves",0)
 	RecolorTraces("p_allSWaves",0)
@@ -363,7 +402,8 @@ Function ClassifyWaves(NameWave,condList)
 			endif
 		endfor
 	endfor
-	Make/O/N=(3,3) colorW = {{136,68,17},{204,170,119},{238,153,51}}
+	Make/O/N=(3,3) colorW = {{136,221,17},{204,204,119},{238,119,51}}
+//	Make/O/N=(3,3) colorW = {{68,136,17},{170,204,119},{153,238,51}}
 	colorW *=257
 	Make/O/N=(3,4) colorAW
 	colorAW[][0,2] = colorW[p][q]
@@ -389,7 +429,7 @@ End
 Function RecolorTraces(graphStr,optVar)
 	String GraphStr
 	Variable optVar // 0 for single graph, 1 for many graphs
-	WAVE/Z/T fitMat_Name
+	WAVE/Z/T fitMat_Name,condWave
 	WAVE/Z fitMat_Class,colorW,colorAW
 	String traceName, tList, windowList, windowName, plotname
 	Variable nTraces, nWindows
@@ -404,11 +444,11 @@ Function RecolorTraces(graphStr,optVar)
 			if(stringmatch(traceName,"*_sgl") == 1 || stringmatch(traceName,"*_dbl") == 1)
 				continue
 			endif
-			if(stringmatch(traceName,"HeLa_GFP_*") == 1)
+			if(stringmatch(traceName,condWave[0]) == 1)
 				ModifyGraph/W=$graphStr rgb($traceName)=(colorAW[0][0],colorAW[0][1],colorAW[0][2],colorAW[0][3])
-			elseif(stringmatch(traceName,"HeLa_GFPTPD54*") == 1)
+			elseif(stringmatch(traceName,condWave[1]) == 1)
 				ModifyGraph/W=$graphStr rgb($traceName)=(colorAW[1][0],colorAW[1][1],colorAW[1][2],colorAW[1][3])
-			elseif(stringmatch(traceName,"HeLa_endoGFP*") == 1)
+			elseif(stringmatch(traceName,condWave[2]) == 1)
 				ModifyGraph/W=$graphStr rgb($traceName)=(colorAW[2][0],colorAW[2][1],colorAW[2][2],colorAW[2][3])
 			endif
 		endfor
@@ -425,11 +465,11 @@ Function RecolorTraces(graphStr,optVar)
 				if(stringmatch(traceName,"*_sgl") == 1 || stringmatch(traceName,"*_dbl") == 1)
 					continue
 				endif
-				if(stringmatch(traceName,"HeLa_GFP_*") == 1)
+				if(stringmatch(traceName,condWave[0]) == 1)
 					ModifyGraph/W=$plotName rgb($traceName)=(colorW[0][0],colorW[0][1],colorW[0][2])
-				elseif(stringmatch(traceName,"HeLa_GFPTPD54*") == 1)
+				elseif(stringmatch(traceName,condWave[1]) == 1)
 					ModifyGraph/W=$plotName rgb($traceName)=(colorW[1][0],colorW[1][1],colorW[1][2])
-				elseif(stringmatch(traceName,"HeLa_endoGFP*") == 1)
+				elseif(stringmatch(traceName,condWave[2]) == 1)
 					ModifyGraph/W=$plotName rgb($traceName)=(colorW[2][0],colorW[2][1],colorW[2][2])
 				endif
 			endfor
@@ -503,14 +543,33 @@ Function SummaryOfFits()
 	Wave fitMat_doubleCellF = RetrieveCellFluorescenceFromWaveNotes()
 	// make cell intensity plot
 	plotName = "IntensityVsOTau"
+	KillWindow/Z $plotName
 	Display/N=$plotName fitMat_doubleCellF vs fitMat_doubleSummary[][1]
 	ModifyGraph/W=$plotName zColor(fitMat_doubleCellF)={fitMat_class,*,*,cindexRGB,0,colorAW}
 	ModifyGraph/W=$plotName mode=3,marker=19
 	SetAxis/W=$plotName bottom 0,20
 	SetAxis/W=$plotName/A/N=1 left
 	Label/W=$plotName bottom "T\B1/2\M (s)"
-	Label/W=$plotName left "Initial Fluorescence (A.U.)"
+	Label/W=$plotName left "Expression (A.U.)"
 	ModifyGraph/W=$plotName mrkThick=0
+	// make tau vs tau plot
+	plotName = "TauSlowVsFast"
+	KillWindow/Z $plotName
+	Display/N=$plotName fitMat_double[][4] vs fitMat_double[][2]
+	ModifyGraph/W=$plotName mode=3,marker=8
+	ModifyGraph/W=$plotName marker=19,zColor(fitMat_double)={fitMat_class,*,*,cindexRGB,0,colorAW}
+	SetAxis/W=$plotName left 0,60
+	SetAxis/W=$plotName bottom 0,8
+	ModifyGraph/W=$plotName zmrkSize(fitMat_double)={fitmat_doubleprop[][3],0.2,1,1,5}
+	ModifyGraph/W=$plotName mrkThick=0
+	Label/W=$plotName bottom "\\$WMTEX$ \\tau_{fast} \\$/WMTEX$ (s)"
+	Label/W=$plotName left "\\$WMTEX$ \\tau_{slow} \\$/WMTEX$ (s)"
+	Make/O/N=(3,3) fakeForLegend={{8,8,8},{15,10,5},{0.2,0.5,1.0}}
+	AppendToGraph/W=$plotName fakeForLegend[][1] vs fakeForLegend[][0]
+	ModifyGraph/W=$plotName mode=3,marker=19,rgb(fakeForLegend)=(34952,34952,34952),zmrkSize(fakeForLegend)={fakeForLegend[*][2],0.2,1,1,5}
+	Tag/W=$plotName/C/N=text0/F=0/A=RC/X=-6.00/Y=0.00/L=0 fakeForLegend, 0,"0.2"
+	Tag/W=$plotName/C/N=text1/F=0/A=RC/X=-6.00/Y=0.00/L=0 fakeForLegend, 1,"0.5"
+	Tag/W=$plotName/C/N=text2/F=0/A=RC/X=-6.00/Y=0.00/L=0 fakeForLegend, 2,"1.0"
 End
 
 STATIC Function/WAVE RetrieveCellFluorescenceFromWaveNotes()
@@ -591,6 +650,24 @@ STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar])
 	SavePICT/O/WIN=$layoutName/PGR=(1,-1)/E=-2/W=(0,0,0,0) as fileName
 End
 
+Function MakeTheFigure()
+	String layoutName = "finalFigure"
+	DoWindow/K $layoutName
+	NewLayout/N=$layoutName
+	// light touch changes to graphs
+	ModifyGraph/W=p_allSWaves noLabel=2
+	Label/W=IntensityVsOTau bottom ""
+	Legend/W=theAveFits/C/N=text0/J "add legend"
+	LayoutPageAction/W=$layoutName size=(595,842),margins=(18,18,18,18)
+	AppendLayoutObject/W=$layoutName/F=0/T=1/R=(21,21,258,215) Graph theAveFits
+	AppendLayoutObject/W=$layoutName/F=0/T=1/R=(245,21,447,215) Graph RcvryVsOTau
+	AppendLayoutObject/W=$layoutName/F=0/T=1/R=(428,21,578,215) Graph TauSlowVsFast
+	AppendLayoutObject/W=$layoutName/F=0/T=1/R=(144,115,257,207) Graph p_allSWaves
+	AppendLayoutObject/W=$layoutName/F=0/T=1/R=(312,86,447,196) Graph IntensityVsOTau
+	String fileName = layoutName + ".pdf"
+	SavePICT/O/WIN=$layoutName/PGR=(1,-1)/E=-2/W=(0,0,0,0) as fileName
+End
+
 ////////////////////////////////////////////////////////////////////////
 // Utility functions
 ////////////////////////////////////////////////////////////////////////
@@ -617,4 +694,15 @@ STATIC Function CleanSlate()
 			KillDataFolder $name		
 		endif
 	endfor
+End
+
+STATIC Function/S TWave2StringList(tW)
+	Wave/T tW
+	String theString = ""
+	Variable nRows = numpnts(tW)
+	Variable i
+	for(i = 0; i < nRows; i += 1)
+		theString += tW[i] + ";"
+	endfor
+	return theString
 End
