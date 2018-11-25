@@ -20,6 +20,8 @@ Function WorkflowForFRAP()
 	MakeTheFigure()
 End
 
+// This function is to specify the names of the FRAP traces for analysis.
+// It was introduced to make it easier to process different datasets.
 Function SpecifyConditions()
 	CleanSlate()
 	String cond0 = "HeLa_GFP_*"
@@ -28,15 +30,17 @@ Function SpecifyConditions()
 	String short0 = "GFP"
 	String short1 = "GFPTPD54"
 	String short2 = "endoGFPTPD54"
-	String hstr = "Specify the names of the FRAP images."
+	String hstr = "Specify the names of the FRAP images.\r"
+	hstr += "Conditions are the actual the prefix of images in wildcard form.\r"
+	hstr += "Short names determine the names used by Igor for averaging."
 		
 	Prompt cond0, "Condition 1"
-	Prompt cond1, "Condition 2"
-	Prompt cond2, "Condition 3"
 	Prompt short0, "Short name 1"
+	Prompt cond1, "Condition 2"
 	Prompt short1, "Short name 2"
+	Prompt cond2, "Condition 3"
 	Prompt short2, "Short name 3"
-	DoPrompt/HELP=hstr "Specify", cond0, cond1, cond2, short0, short1, short2
+	DoPrompt/HELP=hstr "Specify", cond0, short0, cond1, short1, cond2, short2
 	
 	if (V_flag) 
 		return -1
@@ -46,8 +50,7 @@ Function SpecifyConditions()
 	CSVLoader()
 End
 
-// This function loads CSVs saved from ImageJ of line profiles
-// Makes two two-column waves for each image (2 CSVs for red and green)
+// This function loads CSVs of FRAP data saved from ImageJ
 Function CSVLoader()
 	NewDataFolder/O/S root:data
 	
@@ -72,7 +75,6 @@ Function CSVLoader()
 	for(FileLoop = 0; FileLoop < nFiles; FileLoop += 1)
 		ThisFile = StringFromList(FileLoop, FileList)
 		// store name of file
-//		csvNameWave[fileLoop] = RemoveEnding(ThisFile,".csv")
 		csvNameWave[fileLoop] = ThisFile
 		LoadWave/Q/A/J/D/W/O/L={0,1,0,0,0}/K=1/P=expDiskFolder ThisFile
 		WAVE/Z mean1,mean2,mean3
@@ -95,9 +97,10 @@ End
 
 // This function normalises the input waves
 // Time waves are prefixes t_* and are excluded
-// Searchstr can be "*" for all waves, or "*kd*" etc.
-// row0 and row1 specify the start and end of the data to be averaged for baseline
-// A difference between these procedures and those in RUSH kinetics is that the min and max are reversed
+// One difference between these procedures and those in RUSH kinetics is that the min and max are reversed
+///	@param	searchStr	String for finding waves for normalization
+///	@param	row 0		Variable to specify beginning of the data to be averaged for baseline
+///	@param	row 1		Variable to specify end of the data to be averaged for baseline
 Function NormaliseTheseWaves(searchStr,row0,row1)
 	String searchStr
 	Variable row0,row1
@@ -178,6 +181,8 @@ Function PlotOutNormalisedWavesWithTime()
 	SetAxis/W=p_allSWaves left 0,1.2
 End
 
+// This function will make interpolated averages and then do a double exponential fit
+// to the data, with weighting
 STATIC Function MakeTheAverageWavesAndFit()
 	WAVE/Z/T condWave, shortWave
 	if(!WaveExists(condWave) || !WaveExists(shortWave))
@@ -241,6 +246,8 @@ STATIC Function MakeTheAverageWavesAndFit()
 	SetAxis/W=$plotName left 0,1.2
 End
 
+// This function loads timewaves from a textdump from the Bio-Formats import in FIJI
+// It uses functions from ParseTimestampsFromOME.ipf
 Function LoadTimeWaves()
 	SetDataFolder root:
 	LoadAndParse()
@@ -251,6 +258,8 @@ Function LoadTimeWaves()
 	KillWaves/Z OMEDumpWave0
 End
 
+// Here we will rename the waves from their temporary names given upon loading
+// to take their real names from the mvd2 database.
 Function RenameAllTheWaves()
 	WAVE/Z/T csvNameWave // list of csv names
 	WAVE/Z/T imageNameWave	// list of time waves
@@ -314,6 +323,7 @@ Function RenameAllTheWaves()
 	endfor
 End
 
+// Do fits for each FRAP movie. Single exp and double exp are done for comparison.
 Function FitTheWavesUsingTime()
 	String wList = WaveList("*_s",";","")
 	Variable nWaves = ItemsInList(wList)
@@ -348,7 +358,11 @@ Function FitTheWavesUsingTime()
 	MakeTheLayouts("fit_",6,4)
 End
 
-Function TheFitter(yW,xW,ii)
+// This is a function for fitting
+///	@param	yW	the data wave
+///	@param	xW	the time wave (X)
+///	@param	ii	variable to indicate the iteration that is being called.
+STATIC Function TheFitter(yW,xW,ii)
 	Wave yW,xW
 	Variable ii // row number to store W-coefs
 	
@@ -387,6 +401,8 @@ Function TheFitter(yW,xW,ii)
 	ModifyGraph/W=$plotName rgb($dblName)=(0,0,0)
 End
 
+///	@param	NameWave	TextWave with the names of each wave
+///	@param	condList	A semi-colon separated list
 Function ClassifyWaves(NameWave,condList)
 	Wave/T NameWave
 	String condList
@@ -403,13 +419,13 @@ Function ClassifyWaves(NameWave,condList)
 		endfor
 	endfor
 	Make/O/N=(3,3) colorW = {{136,221,17},{204,204,119},{238,119,51}}
-//	Make/O/N=(3,3) colorW = {{68,136,17},{170,204,119},{153,238,51}}
 	colorW *=257
 	Make/O/N=(3,4) colorAW
 	colorAW[][0,2] = colorW[p][q]
 	colorAW[][3] = 32768
 End
 
+// This function compares the fits using single and double exponential
 Function LookAtChiSq()
 	WAVE fitMat_chiSq,fitMat_class,colorAW
 	KillWindow/Z chiSqPlot
@@ -426,9 +442,13 @@ Function LookAtChiSq()
 	DrawLine/W=chiSqPlot 0,1,1,0
 End
 
+// Here we will recolor the existing plots, either doing all windows of a certain name type
+// or doing many traces within a single window
+///	@param	graphStr	String to specify traces in a window or trace in many windows.
+///	@param	optVar	Variable where 0 for single graph, 1 for many graphs
 Function RecolorTraces(graphStr,optVar)
 	String GraphStr
-	Variable optVar // 0 for single graph, 1 for many graphs
+	Variable optVar
 	WAVE/Z/T fitMat_Name,condWave
 	WAVE/Z fitMat_Class,colorW,colorAW
 	String traceName, tList, windowList, windowName, plotname
@@ -477,6 +497,7 @@ Function RecolorTraces(graphStr,optVar)
 	endif
 End
 
+// Long function to make several summary graphs
 Function SummaryOfFits()
 	WAVE/Z fitMat_double,fitMat_class,colorW,colorAW
 	if(!WaveExists(fitmat_double))
@@ -572,6 +593,9 @@ Function SummaryOfFits()
 	Tag/W=$plotName/C/N=text2/F=0/A=RC/X=-6.00/Y=0.00/L=0 fakeForLegend, 2,"1.0"
 End
 
+// This function was added later. The fluorescence of the cell (baseline values) was stored
+// As a wave note. This is now retrieved and used for plotting. This circumvented actually loading
+// and storing the whole trace.
 STATIC Function/WAVE RetrieveCellFluorescenceFromWaveNotes()
 	WAVE/Z/T fitMat_name
 	Variable nWaves = numpnts(fitMat_Name)
@@ -588,6 +612,12 @@ STATIC Function/WAVE RetrieveCellFluorescenceFromWaveNotes()
 	return fitMat_doubleCellF
 End
 
+// This function is a common procedure to make layouts of many windows.
+///	@param	prefix	string - for searching for windows to include in layout
+///	@param	nRow		variable - number of rows in a single page of layout
+///	@param	nCol		variable - number of columns in a single page of layout
+///	@param	iter		optional not used in this ipf
+///	@param	filtVar	optional not used in this ipf
 STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar])
 	String prefix
 	Variable nRow, nCol
@@ -650,6 +680,7 @@ STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar])
 	SavePICT/O/WIN=$layoutName/PGR=(1,-1)/E=-2/W=(0,0,0,0) as fileName
 End
 
+// Here we make a layout with several plots that is used in the paper.
 Function MakeTheFigure()
 	String layoutName = "finalFigure"
 	DoWindow/K $layoutName
@@ -696,6 +727,8 @@ STATIC Function CleanSlate()
 	endfor
 End
 
+// Converts textwave to a semi-colon separated string
+///	@param	tW	textWave for processing
 STATIC Function/S TWave2StringList(tW)
 	Wave/T tW
 	String theString = ""

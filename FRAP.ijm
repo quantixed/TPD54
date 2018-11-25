@@ -4,7 +4,8 @@
  * For 0.069 um/pixel
  * The code makes an ROI for the FRAP region (specified in the file as half-sze)
  * It asks the user to make a bg selection and then specify the cell.
- * The csv output is saved to the directory the user choses with the name of the file.
+ * The csv output is saved to the directory the user choses, using the name of the file.
+ * The ROIs are saved as a zip for reproducibility
  * Written by Stephen Royle 2018-11-17
  */
 function lowestVal(colStr)	{

@@ -1,14 +1,18 @@
 #pragma TextEncoding = "UTF-8"
 #pragma rtGlobals=3		// Use modern global access method and strict wave access.
 
+// This ipf is not completely automated
 // Current method is to do
 // 1. NormaliseTheseWaves(searchStr,row0,row1)
-// 2. PlotOutNormalisedWavesWithTime()
-// 3. Make the averages - manually
-// 4. Change t_ waves (time waves from s to min using ConvertSec2Min()
+// 2. Change t_ waves (time waves from s to min using ConvertSec2Min()
+// 3. PlotOutNormalisedWavesWithTime()
+// 4. Make the averages - manually
 // 5. FitTheWavesUsingTime()
 
 // This function normalises the input waves
+// Time waves are prefixes t_* and are excluded
+// Searchstr can be "*" for all waves, or "*kd*" etc.
+// row0 and row1 specify the start and end of the data to be averaged for baseline
 Function NormaliseTheseWaves(searchStr,row0,row1)
 	String searchStr
 	Variable row0,row1
@@ -16,8 +20,10 @@ Function NormaliseTheseWaves(searchStr,row0,row1)
 	String wList = WaveList(searchStr,";","")
 	String nList = WaveList(searchStr+"_n",";","")
 	String sList = WaveList(searchStr+"_s",";","")
-	wlist=RemoveFromList(nList,wList)
-	wlist=RemoveFromList(sList,wList)
+	String tList = WaveList("t_*",";","")
+	wlist = RemoveFromList(nList,wList)
+	wlist = RemoveFromList(sList,wList)
+	wList = RemoveFromList(tList,wList)
 	
 	Variable nWaves = ItemsInList(wList)
 	String wName,newRatioName,newScaleName
@@ -79,25 +85,28 @@ Function PlotOutNormalisedWavesWithTime()
 		endif
 	endfor
 	Label/W=p_allNWaves left "Ratio (Normalized)"
-	Label/W=p_allNWaves bottom "Time (s)"
+	Label/W=p_allNWaves bottom "Time (min)"
 	Label/W=p_allSWaves left "Ratio (Normalized)"
-	Label/W=p_allSWaves bottom "Time (s)"
+	Label/W=p_allSWaves bottom "Time (min)"
 End
 
 Function FitTheWavesUsingTime()
 	String wList = WaveList("*_s",";","")
+	// uncomment this line to run on the raw data, also trim 5 characters not 3 below
+	wList = ReplaceString("_s",wList,"")
 	Variable nWaves = ItemsInList(wList)
 	String wName,trimmedName,tName,sName
 	Make/O/N=(nWaves)/T fitMat_name
 	Make/O/N=(nWaves,4)/D fitMat_a
 	Make/O/N=(nWaves,2)/D fitMat_b
-	Make/O/N=(nWaves,3)/D resiMat_a=0,resiMat_b=0
+	Make/O/N=(nWaves,3)/D resiMat_a=0,resiMat_b=0,halfTMat=0
+	Make/O/N=(nWaves)/D fitQW_a=0,fitQW_b=0
 	
 	Variable i
 	
 	for(i = 0; i < nWaves; i += 1)
 		wName = StringFromList(i, wList)
-		trimmedName = wName[0,strlen(wName)-5]
+		trimmedName = wName[0,strlen(wName)-3]
 		if(stringmatch(trimmedName,"X*") == 1)
 			trimmedName = ReplaceString("X",trimmedName,"")
 		endif
@@ -115,6 +124,10 @@ Function FitTheWavesUsingTime()
 	MakeTheLayouts("fit_",6,4)
 End
 
+// This is a function for fitting
+///	@param	yW	the data wave
+///	@param	xW	the time wave (X)
+///	@param	ii	variable to indicate the iteration that is being called.
 Function TheFitter(yW,xW,ii)
 	Wave yW,xW
 	Variable ii // row number to store W-coefs
@@ -156,6 +169,10 @@ Function TheFitter(yW,xW,ii)
 	endif
 End
 
+///	@param	yW			This is the data wave
+///	@param	fitW		This wave is the fit wave
+///	@param	storeW	This is the wave where residuals are stored
+///	@param	ii			variable to store iteration
 Function ResiStore(yW,fitW,storeW,ii)
 	Wave yW,fitW,storeW
 	Variable ii
@@ -176,9 +193,26 @@ Function SummariseTheFits(cond0,cond1)
 	WAVE/Z/T fitMat_Name
 	WAVE/Z fitMat_a,fitMat_b
 	WAVE/Z resiMat_a,resiMat_b
-	// Initial QC - change fit values to 0 if mean SSE is exceeded
-	fitMat_a[][] = (resiMat_a[p][2] > 0.015) ? 0 : fitMat_a[p][q]
-	fitMat_b[][] = (resiMat_b[p][2] > 0.004) ? 0 : fitMat_b[p][q]
+	WAVE/Z fitQW_a,fitQW_b // quality waves are 1 if OK, 0 if bad
+	// Initial QC - is mean SSE is exceeded?
+	fitQW_a[] = (resiMat_a[p][2] > 0.015) ? 0 : 1
+	fitQW_b[] = (resiMat_b[p][2] > 0.004) ? 0 : 1
+	// Second QC - mark unrealistic values
+	fitQW_a[] = (fitMat_a[p][2] > 15 || fitMat_a[p][3] > 40) ? 0 : fitQW_a[p]
+	fitQW_b[] = (fitQW_a[p] == 0) ? 0 : fitQW_b[p] // if first fit is bad cancel b
+	// Make a temporary version of the fit Matrices and change rows to 0 if fitQW == 0
+	Duplicate/O/FREE fitMat_a,tempMat_a
+	Duplicate/O/FREE fitMat_b,tempMat_b
+	tempMat_a[][] = (fitQW_a[p] == 0) ? 0 : fitMat_a[p][q]
+	tempMat_b[][] = (fitQW_b[p] == 0) ? 0 : fitMat_b[p][q]
+	// Calculate the half-times
+	WAVE/Z halfTMat
+	halfTMat[][0] = tempMat_a[p][3] // Thalf for a
+	halfTMat[][1] = ((tempMat_a[p][0] + (tempMat_a[p][1] - tempMat_a[p][0]) / 2) - tempMat_b[p][0]) / tempMat_b[p][1]
+	halfTMat[][2] = halfTMat[p][1] - halfTMat[p][0] // inter Thalf
+	// More QC - any extrapolations longer than 3 h?
+	halfTMat[][1] = (halfTMat[p][1] > 150 || halfTMat[p][2] < 6) ? NaN : halfTMat[p][q]
+	halfTMat[][2] = (numtype(halfTMat[p][1]) == 2) ? NaN : halfTMat[p][q]
 	Variable nRows = numpnts(fitMat_Name)
 	Variable count0 = 0
 	Variable count1 = 0
@@ -194,9 +228,8 @@ Function SummariseTheFits(cond0,cond1)
 		endif
 	endfor
 	Variable biggestCount = max(count0,count1)
-	Make/O/N=(biggestCount,2) fitW_a_50 = NaN
-	Make/O/N=(biggestCount,2) fitW_a_rate = NaN
-	Make/O/N=(biggestCount,2) fitW_b = NaN
+	Make/O/N=(biggestCount,2) fitW_a_50 = NaN, fitW_a_rate = NaN, fitW_b = NaN
+	Make/O/N=(biggestCount,2) halfTW_0 = NaN, halfTW_1 = NaN, halfTW_2 = NaN
 	// reset counters and store
 	count0 = 0
 	count1 = 0
@@ -204,43 +237,52 @@ Function SummariseTheFits(cond0,cond1)
 	for(i = 0; i < nRows; i += 1)
 		cellName = fitMat_Name[i]
 		if(stringmatch(cellName,"*"+cond0+"*") == 1)
-			fitW_a_50[count0][0] = fitMat_a[i][3] // sigmoid is 2
-			fitW_a_rate[count0][0] = fitMat_a[i][2]
-			fitW_b[count0][0] =fitMat_b[i][1]
+			fitW_a_50[count0][0] = tempMat_a[i][3] // sigmoid is 2
+			fitW_a_rate[count0][0] = tempMat_a[i][2]
+			fitW_b[count0][0] = tempMat_b[i][1]
+			halfTW_0[count0][0] = halfTMat[i][0]
+			halfTW_1[count0][0] = halfTMat[i][1]
+			halfTW_2[count0][0] = halfTMat[i][2]
 			count0 += 1
 		elseif(stringmatch(cellName,"*"+cond1+"*") == 1)
-			fitW_a_50[count1][1] = fitMat_a[i][3]
-			fitW_a_rate[count1][1] = fitMat_a[i][2]
-			fitW_b[count1][1] = fitMat_b[i][1]
+			fitW_a_50[count1][1] = tempMat_a[i][3]
+			fitW_a_rate[count1][1] = tempMat_a[i][2]
+			fitW_b[count1][1] = tempMat_b[i][1]
+			halfTW_0[count1][1] = halfTMat[i][0]
+			halfTW_1[count1][1] = halfTMat[i][1]
+			halfTW_2[count1][1] = halfTMat[i][2]
 			count1 += 1
 		endif
 	endfor
-	// now for some QC
-	fitW_a_rate[][] = (fitW_a_50[p][q] > 40) ? 0 : fitW_a_rate[p][q] // if xHalf is longer than 40 min
-	fitW_a_50[][] = (fitW_a_rate[p][q] == 0) ? 0 : fitW_a_50[p][q]
-	fitW_b[][] = (fitW_a_50[p][q] == 0) ? 0 : fitW_b[p][q] // if first fit is bad cancel b
-//	fitW_b[][] = (fitW_b[p][q] < -0.0001) ? 0 : fitW_b[p][q]
 	// now convert 0 to NaN
 	fitW_a_50[][] = (fitW_a_50[p][q] == 0) ? NaN : fitW_a_50[p][q]
 	fitW_a_rate[][] = (fitW_a_rate[p][q] == 0) ? NaN : fitW_a_rate[p][q]
 	fitW_b[][] = (fitW_b[p][q] == 0) ? NaN : fitW_b[p][q]
+	halfTW_0[][] = (halfTW_0[p][q] == 0) ? NaN : halfTW_0[p][q]
+	halfTW_1[][] = (halfTW_1[p][q] == 0) ? NaN : halfTW_1[p][q]
+	halfTW_2[][] = (halfTW_2[p][q] == 0) ? NaN : halfTW_2[p][q]
 	// make labels and then the boxplots
 	Make/O/N=2/T labelWave={cond0,cond1}
-	KillWindow/Z fit_sigmoid50
-	Display/N=fit_sigmoid50
-	AppendBoxPlot/W=fit_sigmoid50 fitW_a_50 vs labelWave
-	Label/W=fit_sigmoid50 left "xHalf (min)"
-	SetAxis/A/N=1/W=fit_sigmoid50 left
-	KillWindow/Z fit_sigmoidRate
-	Display/N=fit_sigmoidRate
-	AppendBoxPlot/W=fit_sigmoidRate fitW_a_rate vs labelWave
-	Label/W=fit_sigmoidRate left "rate"
-	SetAxis/A/N=1/W=fit_sigmoidRate left
-	KillWindow/Z fit_lineRate
-	Display/N=fit_lineRate
-	AppendBoxPlot/W=fit_lineRate fitW_b vs labelWave
-	Label/W=fit_lineRate left "slope (min\S-1\M)"
-	SetAxis/A/N=1/W=fit_lineRate left
+	MakeBoxPlot("fit_sigmoid50",fitW_a_50,"xHalf (min)")
+	MakeBoxPlot("fit_sigmoidRate",fitW_a_rate,"rate")
+	MakeBoxPlot("fit_lineRate",fitW_b,"slope (min\S-1\M)")
+	MakeBoxPlot("fit_thalf0",halfTW_0,"time (min)")
+	MakeBoxPlot("fit_thalf1",halfTW_1,"time (min)")
+	MakeBoxPlot("fit_thalf2",halfTW_2,"time (min)")
+End
+
+// This function will make a "multicolumn" boxplot (Igor >8 only) 
+STATIC Function MakeBoxPlot(plotName,yW,labelString)
+	String plotName
+	Wave yW
+	String labelString
+	
+	WAVE/Z/T labelWave
+	KillWindow/Z $plotName
+	Display/N=$plotName
+	AppendBoxPlot/W=$plotName yW vs labelWave
+	Label/W=$plotName left labelString
+	SetAxis/A/N=1/W=$plotName left
 End
 
 STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar])
