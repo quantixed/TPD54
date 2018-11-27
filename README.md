@@ -1,9 +1,17 @@
 # TPD54
 Code for TPD54-related projects
 
+--
+
 ### Volcano plot
 
 Proteomic data is available in `data/MSData.tsv`. It can be loaded into Igor and the volcano plot and analysis generated using `VolcanoPlot.ipf`. The output from the paper is available in `output/VolcanoPlot.tsv`, note that the imputation of missing values means that the output of `VolcanoPlot.ipf` will be slightly different each time. 
+
+--
+
+### Vesicle capture
+
+Analysis of mitochondria and vesicle profiles is done using `IMODModelTPD.ipf`. The outputs from IMOD model2point are in `data/EM`. These are IMOD models converted to text files that Igor can read. Load `FileName++.txt` and `TiffName++.txt` and then run IMOD Model Analysis from the macros menu. Point Igor to the dataset you'd like to process. Note that some datasets have thousands of vesicles and the proximity analysis can take a long time to run.
 
 --
 
