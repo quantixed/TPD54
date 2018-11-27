@@ -1,6 +1,8 @@
 # TPD54
 Code for TPD54-related projects
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.1585668.svg)](https://doi.org/10.5281/zenodo.1585668)
+
 --
 
 ### Volcano plot
