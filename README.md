@@ -1,7 +1,9 @@
 # TPD54
 Code for TPD54-related projects
 
+### Volcano plot
 
+Proteomic data is available in `data/MSData.tsv`. It can be loaded into Igor and the volcano plot and analysis generated using `VolcanoPlot.ipf`. The output from the paper is available in `output/VolcanoPlot.tsv`, note that the imputation of missing values means that the output of `VolcanoPlot.ipf` will be slightly different each time. 
 
 --
 
