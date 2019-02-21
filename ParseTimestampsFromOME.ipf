@@ -12,9 +12,9 @@
 // Known issue: if the OME-XML file has incomplete timestamps the function makes strange waves
 
 Menu "Macros"
-	"Load OME XML file",  LoadTextFileOfOMEXMLdata()
-	"Parse time stamps", ParseText()
-	"Load and parse", LoadAndParse()
+	"Load OME XML File",  LoadTextFileOfOMEXMLdata()
+	"Parse Time Stamps", ParseText()
+	"Load and Parse", LoadAndParse()
 End
 
 Function LoadAndParse()
@@ -96,8 +96,9 @@ Function ParseText()
 			j +=1
 		EndIf
 	EndFor
-	WaveStats/Q mDataWave	// max value should be i and should exceed deltaT
-	DeletePoints/M=0 V_maxRowLoc+1, (DimSize(mDataWave,0)-V_maxRowLoc), mDataWave
+	Truncator(mDataWave)
+//	WaveStats/Q mDataWave	// max value should be i and should exceed deltaT
+//	DeletePoints/M=0 V_maxRowLoc+1, (DimSize(mDataWave,0)-V_maxRowLoc), mDataWave
 //	Edit/N=matrixTable mDataWave
 
 	// split up 2D wave
@@ -153,4 +154,24 @@ STATIC Function WaveChecker(w1)
 	else
 		return 0
 	endif
+End
+
+STATIC Function Truncator(w0)
+	Wave w0
+	Variable nRows = DimSize(w0,0)
+	if(DimSize(w0,1) == 0)
+		Duplicate/O/FREE w0,c0
+	else
+		MatrixOp/O/FREE c0 = col(w0,0)
+	endif
+	
+	Variable i,NaNPnt
+	
+	for(i = 0; i < nRows; i += 1)
+		if(numtype(c0[i]) == 2)
+			NaNPnt = i
+			break
+		endif
+	endfor
+	DeletePoints/M=0 NaNPnt, (nRows - NaNPnt), w0
 End
