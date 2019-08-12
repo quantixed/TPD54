@@ -18,6 +18,7 @@ Function DoSTORMAnalysis()
 	CleanOutputs()
 	PlotCoefs()
 	FindAndPlotWidth()
+	SpotDensity()
 	MakeTheLayouts("p",5,3)
 End
 
@@ -213,6 +214,27 @@ STATIC Function FindAndPlotWidth()
 	sprintf medianStr, "%*.*f nm", 2,2, StatsMedian(tempW)
 	String nSpots = num2str(numpnts(tempW))
 	TextBox/C/N=text0/F=0/X=0.00/Y=0.00 "Mean = "+meanStr+"\rMedian = "+medianStr+"\rN\Bspots\M = "+nSpots
+End
+
+Function SpotDensity()
+	WAVE/Z allCoefsClean
+	if(!WaveExists(allCoefsClean))
+		DoAlert 0, "Run the analysis first!"
+	endif
+	Make/O/N=(DimSize(allCoefsClean,0)) spotX,spotY
+	spotX[] = allCoefsClean[p][2] * 10
+	spoty[] = allCoefsClean[p][4] * 10
+	WaveTransform zapnans spotX
+	WaveTransform zapnans spotY
+	ConvexHull/C spotX,spotY
+	WAVE/Z W_Xhull,W_Yhull
+	Print DimSize(spotx,0) / (PolygonArea(W_Xhull,W_Yhull) / 10000000), "per 10 µm^2"
+	KillWindow/Z spotGraph
+	Display/N=spotGraph spotY vs spotX
+	ModifyGraph/W=spotGraph mode(spotY)=2
+	AppendToGraph/W=spotGraph W_YHull vs W_XHull
+	ModifyGraph/W=spotGraph width={Plan,1,bottom,left}
+	ModifyGraph/W=spotGraph mirror=1
 End
 
 ////////////////////////////////////////////////////////////////////////
